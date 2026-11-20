@@ -1,0 +1,26 @@
+- name: Read installed containerlab version
+  ansible.builtin.shell: set -o pipefail && containerlab version 2>/dev/null | awk '/version:/ {print $2; exit}'
+  args:
+    executable: /bin/bash
+  register: vlab_clab_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install containerlab {{ vlab_containerlab_version }}
+  when: vlab_clab_installed.stdout | trim != vlab_containerlab_version
+  become: true
+  vars:
+    vlab_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}"
+    vlab_deb: "containerlab_{{ vlab_containerlab_version }}_linux_{{ vlab_arch }}.deb"
+  block:
+    - name: Download containerlab package (checksum-verified)
+      ansible.builtin.get_url:
+        url: "https://github.com/srl-labs/containerlab/releases/download/v{{ vlab_containerlab_version }}/{{ vlab_deb }}"
+        dest: "/var/cache/apt/archives/{{ vlab_deb }}"
+        checksum: "sha256:{{ vlab_containerlab_sha256[vlab_arch] }}"
+        mode: "0644"
+
+    - name: Install containerlab package
+      ansible.builtin.apt:
+        deb: "/var/cache/apt/archives/{{ vlab_deb }}"
+        allow_downgrade: true

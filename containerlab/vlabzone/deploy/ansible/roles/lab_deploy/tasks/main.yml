@@ -1,0 +1,19 @@
+# Only runs with --tags deploy. Deploys the smoke lab (and later the full topology) and checks it.
+- name: Host check after provisioning
+  become: true
+  ansible.builtin.command:
+    cmd: make host-check
+    chdir: "{{ vlab_lab_dir }}"
+  changed_when: false
+
+- name: Smoke test (2-node lab with VLAN, VRF and WireGuard)
+  become: true
+  ansible.builtin.command:
+    cmd: make smoke
+    chdir: "{{ vlab_lab_dir }}"
+  register: vlab_smoke
+  changed_when: false
+
+- name: Smoke test result
+  ansible.builtin.debug:
+    msg: "{{ vlab_smoke.stdout_lines | select('search', 'ok:|PASSED|WARN') | list }}"

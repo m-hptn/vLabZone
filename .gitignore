@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# containerlab runtime directories
+clab-*/
+.*.clab.yml.bak
+
+# Generated per-host configuration
+containerlab/vlabzone/.env
+
+# Experiment results (protocols, pcaps) – only the folder itself is tracked
+containerlab/vlabzone/results/*
+!containerlab/vlabzone/results/.gitkeep
+
+# Secrets and downloaded images
+*.key
+*.vmdk
+*.vmdk.zip
+.cache/
+deploy/ansible/**/vault*.yml
+!deploy/ansible/**/vault.example.yml

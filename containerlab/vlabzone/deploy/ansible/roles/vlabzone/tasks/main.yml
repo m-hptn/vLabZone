@@ -1,0 +1,69 @@
+# Place the repo on the target, render .env, prepare the test venv and build the images.
+
+- name: Copy the checkout to the target (sync)
+  when: vlab_source == 'sync'
+  block:
+    - name: Create the target directory
+      ansible.builtin.file:
+        path: "{{ vlab_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Rsync the repository
+      ansible.posix.synchronize:
+        src: "{{ vlab_repo_root_controller }}/"
+        dest: "{{ vlab_dir }}/"
+        delete: true
+        rsync_opts:
+          - "--exclude=.git/"
+          - "--exclude=.venv/"
+          - "--exclude=.env"
+          - "--exclude=clab-*/"
+          - "--exclude=results/*"
+          - "--exclude=__pycache__/"
+          - "--exclude=collections/"
+      register: vlab_sync
+
+- name: Clone the repository (git)
+  ansible.builtin.git:
+    repo: "{{ vlab_repo_url }}"
+    dest: "{{ vlab_dir }}"
+    version: "{{ vlab_repo_version }}"
+  register: vlab_git
+  when: vlab_source == 'git'
+
+- name: Render per-host settings (.env)
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ vlab_lab_dir }}/.env"
+    mode: "0644"
+
+- name: Create the Python venv for the test suite
+  ansible.builtin.command:
+    cmd: make venv
+    chdir: "{{ vlab_lab_dir }}"
+  register: vlab_venv
+  changed_when: "'Nothing to be done' not in vlab_venv.stdout"
+
+- name: Read the lab version
+  ansible.builtin.slurp:
+    src: "{{ vlab_lab_dir }}/VERSION"
+  register: vlab_version_file
+
+- name: Check whether the images of this version exist
+  become: true
+  ansible.builtin.command: docker image inspect hwpool/base:{{ vlab_version_file.content | b64decode | trim }}
+  register: vlab_image_check
+  changed_when: false
+  failed_when: false
+
+- name: Build the lab images
+  become: true   # the docker group membership is not active in this session yet
+  ansible.builtin.command:
+    cmd: make build
+    chdir: "{{ vlab_lab_dir }}"
+  when: >-
+    vlab_rebuild_images | bool
+    or vlab_image_check.rc != 0
+    or (vlab_sync is defined and vlab_sync is changed)
+    or (vlab_git is defined and vlab_git is changed)

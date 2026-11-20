@@ -1,0 +1,6 @@
+# Test users for the broker prototype (token auth, stage 3).
+# Tokens are lab-only placeholders – never reuse them anywhere else.
+users:
+  - { id: 1, name: alice, workspace: ws-std,   mode: desktop, token: lab-token-alice }
+  - { id: 2, name: bob,   workspace: ws-power, mode: power,   token: lab-token-bob }
+  - { id: 3, name: ci,    workspace: ws-ci,    mode: alias,   token: lab-token-ci }

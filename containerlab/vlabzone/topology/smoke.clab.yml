@@ -1,0 +1,15 @@
+# Minimal 2-node lab to verify that a host can run vLabZone:
+# containerlab works, veth links work without Docker IPAM, and the kernel
+# features VLAN, VRF and WireGuard are usable inside privileged nodes.
+# Used by `make smoke` (scripts/smoke.sh) and the Ansible role lab_deploy.
+name: vlab-smoke
+topology:
+  defaults:
+    kind: linux
+    image: hwpool/base:latest
+    network-mode: none
+  nodes:
+    a: {}
+    b: {}
+  links:
+    - endpoints: ["a:eth1", "b:eth1"]

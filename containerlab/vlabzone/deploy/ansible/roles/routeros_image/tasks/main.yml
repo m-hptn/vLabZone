@@ -1,0 +1,23 @@
+- name: Check for KVM
+  ansible.builtin.stat:
+    path: /dev/kvm
+  register: vlab_kvm
+
+- name: RouterOS CHR needs KVM
+  ansible.builtin.assert:
+    that: vlab_kvm.stat.exists and vlab_kvm.stat.ischr
+    fail_msg: >-
+      /dev/kvm is missing on {{ inventory_hostname }}. Enable VT-x/AMD-V (bare metal) or nested
+      virtualization (VM), or set vlab_routeros_enabled: false for this host.
+
+- name: Build the RouterOS CHR image via vrnetlab
+  become: true
+  ansible.builtin.command:
+    cmd: >-
+      {{ vlab_lab_dir }}/images/routeros/build.sh
+      --version {{ vlab_routeros_version }}
+      --sha256 {{ vlab_routeros_sha256 }}
+      --vrnetlab-ref {{ vlab_vrnetlab_ref }}
+      --cache-dir /var/cache/vlabzone
+  register: vlab_ros_build
+  changed_when: "'nothing to do' not in vlab_ros_build.stdout"

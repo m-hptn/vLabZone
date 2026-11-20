@@ -1,0 +1,40 @@
+# Central defaults and pinned versions for every vLabZone host.
+# Override per host in inventory or host_vars/<host>.yml.
+
+# --- What to install ----------------------------------------------------------
+vlab_profile: base                 # base | scale (resource thresholds in preflight)
+vlab_edge_impl: linux              # linux | routeros
+vlab_edge_mode: vrf                # vrf | pbr
+vlab_routeros_enabled: false       # build the RouterOS CHR image (needs /dev/kvm)
+vlab_manage_docker: true           # install Docker CE if docker is missing; never touches an existing install
+vlab_rebuild_images: false         # force `make build` even if images exist
+
+# --- Where the repo lives on the target --------------------------------------
+# local: use the checkout the playbook runs from (localhost only)
+# sync:  rsync the checkout from the control node to vlab_dir
+# git:   git clone vlab_repo_url@vlab_repo_version to vlab_dir
+vlab_source: sync
+vlab_dir: "{{ ansible_facts.user_dir }}/vLabZone"
+vlab_repo_url: ""
+vlab_repo_version: main
+vlab_lab_subdir: containerlab/vlabzone
+
+# --- Pinned versions ----------------------------------------------------------
+vlab_containerlab_version: "0.82.0"
+vlab_containerlab_sha256:
+  amd64: 770e18f19ef75732eb9f4e362541f509abb2b6eeadde2d5c98140190b19b519a
+  arm64: 2d13a167a9d18275a765cb614a0c692d46a76d50c7f239dabcdb01d99eb93242
+vlab_docker_ce_version: ""          # empty = newest from the Docker apt repo at install time
+
+# RouterOS CHR: keep in line with the real MikroTik
+vlab_routeros_version: "7.24.6"
+vlab_routeros_sha256: 30ee295fa1807c3de9819c7308e6b1629cf4bda29e7a42ea27788af75f63fdaf
+vlab_vrnetlab_ref: 85445edfdf366b3d5f04942a10bb5a7d22df61a7
+
+# --- Build settings for restricted networks ----------------------------------
+vlab_apt_mirror: ""
+vlab_http_proxy: ""
+vlab_https_proxy: ""
+
+# --- Kernel -------------------------------------------------------------------
+vlab_kernel_modules: [wireguard, vrf, 8021q, bridge]

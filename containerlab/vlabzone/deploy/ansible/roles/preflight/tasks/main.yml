@@ -1,0 +1,29 @@
+- name: Run the preflight script (same checks as `make host-check`)
+  ansible.builtin.script:
+    cmd: >-
+      {{ playbook_dir }}/../../scripts/preflight.sh --stage pre --profile {{ vlab_profile }}
+      {{ '--routeros' if vlab_routeros_enabled | bool else '' }}
+  register: vlab_preflight
+  changed_when: false
+  failed_when: false
+
+- name: Show preflight result
+  ansible.builtin.debug:
+    msg: "{{ vlab_preflight.stdout_lines }}"
+
+- name: Stop if the host does not meet the requirements
+  ansible.builtin.fail:
+    msg: "Preflight failed on {{ inventory_hostname }} – see FAIL lines above."
+  when: vlab_preflight.rc != 0
+
+- name: Validate settings
+  ansible.builtin.assert:
+    that:
+      - vlab_edge_impl in ['linux', 'routeros']
+      - vlab_edge_mode in ['vrf', 'pbr']
+      - vlab_profile in ['base', 'scale']
+      - vlab_source in ['local', 'sync', 'git']
+      - vlab_source != 'local' or ansible_connection == 'local'
+      - vlab_source != 'git' or vlab_repo_url | length > 0
+      - vlab_edge_impl != 'routeros' or vlab_routeros_enabled | bool
+    quiet: true

@@ -1,0 +1,40 @@
+# Provision a vLabZone host: checks → prerequisites → repo + images → (optional) RouterOS image → (optional) smoke deploy.
+#
+#   local:   ansible-playbook site.yml -K
+#   remote:  ansible-playbook -i inventory/hosts.yml site.yml -K
+#   + smoke: add  --tags all,deploy
+#
+# Facts are gathered as the connecting user (so vlab_user/vlab_dir point to that user);
+# only the tasks that need root use become.
+- name: Provision vLabZone hosts
+  hosts: all
+  become: false
+  gather_facts: true
+  pre_tasks:
+    - name: Remember the unprivileged user that will run the lab
+      ansible.builtin.set_fact:
+        vlab_user: "{{ ansible_facts.user_id }}"
+        vlab_repo_root_controller: "{{ (playbook_dir ~ '/../../../..') | realpath }}"
+      tags: [always]
+
+    - name: Resolve where the repository lives on the target
+      ansible.builtin.set_fact:
+        vlab_root: "{{ vlab_repo_root_controller if vlab_source == 'local' else vlab_dir }}"
+      tags: [always]
+
+    - name: Resolve the lab directory
+      ansible.builtin.set_fact:
+        vlab_lab_dir: "{{ vlab_root }}/{{ vlab_lab_subdir }}"
+      tags: [always]
+  roles:
+    - role: preflight
+      tags: [preflight]
+    - role: host_prereqs
+      tags: [prereqs]
+    - role: vlabzone
+      tags: [vlabzone]
+    - role: routeros_image
+      tags: [routeros]
+      when: vlab_routeros_enabled | bool
+    - role: lab_deploy
+      tags: [never, deploy]

@@ -1,0 +1,20 @@
+# Copy to inventory/hosts.yml and adapt. Remote hosts are reached via SSH;
+# the repo is copied there with rsync (vlab_source: sync) or cloned (vlab_source: git).
+all:
+  children:
+    vlab_hosts:
+      hosts:
+        lab-host-01:
+          ansible_host: 192.0.2.10
+          ansible_user: labadmin
+          # ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+        lab-vm-02:
+          ansible_host: 192.0.2.11
+          ansible_user: labadmin
+          vlab_profile: scale            # 8 vCPU / 16 GB for E21
+          vlab_routeros_enabled: true    # needs /dev/kvm (nested virtualization on VMs)
+      vars:
+        vlab_source: sync
+        # vlab_source: git
+        # vlab_repo_url: https://git.example.com/team/vLabZone.git
+        # vlab_repo_version: main

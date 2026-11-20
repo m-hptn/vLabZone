@@ -6,8 +6,8 @@ on a single Linux host. Background and experiments: [`../../idea.md`](../../idea
 implementation roadmap: [`../../PLAN.md`](../../PLAN.md).
 
 > **Status:** three labs, `vlabzone-vrf`, `vlabzone-pbr` and `vlabzone-hybrid`, one per edge mode, generated from
-> `config/setups.yaml`. All pass E01–E06, E09 and E20; E10 compares the modes. RouterOS trial (stage 1b) done for
-> all three designs: [docs/routeros-spike.md](docs/routeros-spike.md).
+> `config/setups.yaml`. All pass E01–E06, E09, E11, E13 and E20; E10 compares the modes. RouterOS trial (stage 1b)
+> done for all three designs: [docs/routeros-spike.md](docs/routeros-spike.md).
 
 ---
 
@@ -200,7 +200,7 @@ Every node's configuration and why it is needed, per lab: [`docs/`](docs/README.
 
 | Node | Addresses | Purpose |
 |---|---|---|
-| `ws-std`, `ws-power`, `ws-ci` | 10.20.10.11–13 | workspaces (corporate) |
+| `ws-std`, `ws-power`, `ws-ci` | 10.20.10.11–13 | workspaces (corporate): desktop, power (`lab enter <setup>` = namespace per setup), alias (setup N as 10.200.N.0/24); `lab list` |
 | `corp-svc` | 10.20.20.10 | corporate service |
 | `corp-fw` | 10.20.10.1, .20.1, .99.1, .98.1 | corporate firewall, only WireGuard UDP (VRF: 51800–52099, PBR/hybrid: 51820) / TCP 443, 8443 to the lab |
 | `lab-edge` | 10.20.99.2, 10.198.0.2, 192.168.1.254 per setup (VRF, hybrid) | VRF: WireGuard + VRF per setup; PBR: `wg0` + rules to gateways; hybrid: `wg0` + rules into setup VRFs. `edge-ctl` |

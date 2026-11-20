@@ -73,7 +73,7 @@ def connect(ws: Node, edge: Node, user: int, setup: int, *, netns: str | None = 
         ws.run(f"ip netns add {netns} && ip link set {ifname} netns {netns} && ip -n {netns} link set lo up")
     t = Tunnel(ws, edge, user, setup, ifname, pubkey, addr, netns, register)
     t.run(f"ip addr add {addr}/32 dev {ifname} && ip link set {ifname} up && "
-          f"ip route add 10.250.0.1/32 dev {ifname} src {addr}")
+          f"ip route replace 10.250.0.1/32 dev {ifname} src {addr}")   # replace: several tunnels in one namespace (alias mode)
     for net in routes:
         t.run(f"ip route add {net} dev {ifname} src {addr}")
     return t

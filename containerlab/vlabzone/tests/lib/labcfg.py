@@ -41,3 +41,18 @@ def tunnel_ip(setup_id: int, user: int) -> str:
 
 def setup_prefix(setup_id: int) -> str:
     return vlab_cfg.setup_prefix(CFG, setup_id)
+
+
+def alias_ip(setup_id: int, ip: str) -> str:
+    """Alias address of <ip> (192.168.1.x) in setup <setup_id>: 10.200.<setup>.x"""
+    import ipaddress
+    net = ipaddress.ip_network(vlab_cfg.alias_prefix(CFG, setup_id))
+    return str(net.network_address + (int(ipaddress.ip_address(ip)) & 0xFF))
+
+
+def alias_prefix(setup_id: int) -> str:
+    return vlab_cfg.alias_prefix(CFG, setup_id)
+
+
+def setup(setup_id: int) -> dict:
+    return next(s for s in CFG["setups"] if s["id"] == setup_id)

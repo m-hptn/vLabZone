@@ -197,6 +197,14 @@ vLabZone/containerlab/vlabzone/
     254 users per setup. Recommendation: hybrid. Details: `containerlab/vlabzone/docs/tunnel-addresses.md`.
     Suites: VRF 64, PBR 69, hybrid 65 passed (0 failed). RouterOS trials: VRF 25/25, PBR 25/25, hybrid 23/23.
 12. `lab enter` namespaces in `ws-power` (E11), alias mode in `ws-ci` (E13).
+    ✅ implemented 2026-11-20. `lab` CLI in the workspace image (`lab list`, `lab enter <setup> [-- CMD]`,
+    prompt `[setupNN]`; connect/disconnect follow with lab-agent in stage 3). Alias on the edge in every mode
+    (`edge-alias.sh`): per setup `ip saddr 10.250.N.0/24 ip daddr 10.200.N.0/24 dnat prefix to 192.168.1.0/24`
+    in prerouting – only the setup's own tunnels are translated (E13b). E11: setups 12 + 7 in parallel in
+    ws-power, HTTP + SSH under iperf3 load (~750–940 Mbit/s each), every session in the right setup. E13:
+    ws-ci reaches all devices of setups 12 and 7 via 10.200.12.x / 10.200.7.x in one namespace.
+    Known limit: IPs in payloads (active FTP, SIP) are not translated.
+    Full suites: VRF 68, PBR 73, hybrid 69 passed (0 failed).
 13. `acc-12-ser`: socat pty + fake console + ser2net RFC 2217 on :3001; pyserial client test (E14).
 14. RouterOS edge: `render.py` + `.rsc` templates for VRF/PBR/alias, `routeros_image` Ansible role,
     `EDGE_IMPL` switch in Makefile/topology; stage 1–2 suites pass with `EDGE_IMPL=routeros` (peers added

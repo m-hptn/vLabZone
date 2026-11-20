@@ -87,6 +87,23 @@ the agent will, and they are **identical in all labs**. The workspace asks the e
 | `persistent-keepalive 25` | keeps the corporate firewall's UDP state alive so the lab can still reply after idle periods (E16) |
 | Address `10.250.<setup>.<user>/32` ([tunnel-addresses.md](tunnel-addresses.md)), route `192.168.1.0/24 dev wg-s12 src 10.250.12.1` | desktop mode: the setup network is reached at its original addresses |
 | **Power mode:** create the interface in the main namespace, then move it into namespace `setupN` | the encrypted socket stays outside (it needs corp-fw), and the decrypted interface exists only inside the namespace. Inside, there is no route to the corporate network at all, so several setups with the same network can be used side by side (E09, E11) |
+| **Alias mode:** route `10.200.<setup>.0/24 dev wg-s<setup>` instead of `192.168.1.0/24`, all contexts in the main namespace | the edge maps `10.200.N.x` to `192.168.1.x` of setup N ([section 2.5](#25-alias-addresses-on-the-edge-all-modes)). Several setups with the same network side by side without namespaces, e.g. for CI jobs (E13) |
+
+**`lab` CLI** ([`images/workspace/lab`](../images/workspace/lab)) **[real]**: the user's view of the contexts.
+Stage 2 has the part that works on existing contexts; `lab connect|disconnect` follow with `lab-agent` (stage 3).
+
+| Command | What it does |
+|---|---|
+| `lab list` | every context on the workspace: setup (from the tunnel address), mode (desktop = main namespace, power = namespace `setupN`), interface, address, last handshake |
+| `lab enter 12` | shell inside namespace `setup12` with prompt `[setup12]`; only setup 12 is reachable there |
+| `lab enter 12 -- CMD` | one command inside the namespace (used by E11) |
+
+```text
+$ docker exec clab-vlabzone-hybrid-ws-power lab list          # during E11
+SETUP   MODE     IFACE    ADDRESS         HANDSHAKE
+12      power    wg-s12   10.250.12.2     1s ago
+7       power    wg-s7    10.250.7.2      0s ago
+```
 
 The tunnel address encodes setup and user: **10.250.\<setup\>.\<user\>** (`10.250.12.1` = Alice, user 1, in
 setup 12), so every setup owns the prefix `10.250.<setup>.0/24`. In the VRF lab it makes contexts readable in
@@ -226,6 +243,43 @@ lab-sys2 (.5).
 | Plain bridge over eth1–eth5, no IP **[sim]** | containerlab only has point-to-point links, so this stands in for a management switch/VLAN. It has no address, so it can't be reached |
 | Separate from the trunks and from the corporate side **[real]** | management traffic never shares a segment with setups or workspaces; E05 checks that neither side reaches it |
 
+### 2.5 Alias addresses on the edge (all modes)
+
+**Role:** a second address for every setup, so one workspace can reach several setups with the **same**
+network at the same time without namespaces (alias mode, `ws-ci`, E13). Script:
+[`edge-alias.sh`](../images/edge/edge-alias.sh), loaded after the mode script on every edge.
+
+```text
+$ nft list table ip alias                                   # lab-edge, any mode
+table ip alias {
+	chain prerouting {
+		type nat hook prerouting priority dstnat; policy accept;
+		ip saddr 10.250.12.0/24 ip daddr 10.200.12.0/24 dnat prefix to 192.168.1.0/24 comment "setup 12 alias"
+		ip saddr 10.250.7.0/24 ip daddr 10.200.7.0/24 dnat prefix to 192.168.1.0/24 comment "setup 7 alias"
+		ip saddr 10.250.5.0/24 ip daddr 10.200.5.0/24 dnat prefix to 192.168.1.0/24 comment "setup 5 alias"
+	}
+}
+```
+
+| Setting | Why |
+|---|---|
+| Setup N = `10.200.N.0/24` (`vlab-cfg alias-prefix N`, from `edge.alias_net`) **[real]** | one alias /24 per setup, same numbering as the tunnel prefixes: `10.200.12.20` is device `.20` of setup 12 |
+| DNAT of the whole prefix, `10.200.N.x → 192.168.1.x` **[real]** | the device keeps its address; conntrack maps the replies back to `10.200.N.x`. The MASQUERADE of the mode still applies, so devices see `.254` |
+| Only for `ip saddr 10.250.N.0/24` **[real]** | a setup's alias is translated only for that setup's own tunnels. `10.250.12.x → 10.200.7.20` stays untranslated and has no route: the alias addresses don't open a path between setups (E13b). This is a plain prefix match because tunnel addresses are 10.250.\<setup\>.\<user\> |
+| In the `prerouting` hook, before routing **[real]** | VRF and hybrid then route `192.168.1.x` inside the setup's table; PBR sends it to gw-N as usual. Same rules in every mode |
+
+Known limit: protocols that carry IP addresses in the payload (active FTP, SIP) see the real `192.168.1.x`
+addresses and break in alias mode.
+
+E13 result (every device of setups 12 and 7 at once from `ws-ci`, one namespace):
+
+| Alias | Device |
+|---|---|
+| 10.200.12.20 | sys1-dev1 |
+| 10.200.12.21 | sys1-dev2 |
+| 10.200.7.20 | sys1-dev3 |
+| 10.200.7.22 | sys1-dev4 |
+
 ---
 
 ## 3. Settings that apply to all nodes
@@ -249,14 +303,18 @@ lab-sys2 (.5).
    Nothing else, and no routes to lab-internal networks.
 2. Switches: VLAN filtering, no default VLAN on ports, at most one untagged VLAN per access port (none for
    ungrouped devices), every trunk with only the VLANs needed behind it, management outside the setups.
-8. Regrouping devices = changing access-port VLANs on the system switch; afterwards the setup gateways must
+3. Regrouping devices = changing access-port VLANs on the system switch; afterwards the setup gateways must
    forget stale ARP entries. Two devices with the same IP must never be grouped into one setup (the broker refuses).
-3. Peers only through the broker, `/32` allowed IPs per key, conntrack flush on revoke.
-4. Edge keys must be persistent in production (in the lab they are regenerated on every start).
-5. The edge firewall must restrict what tunnels may reach **on the edge itself** by destination address
+4. Peers only through the broker, `/32` allowed IPs per key from the setup's prefix 10.250.\<setup\>.0/24,
+   conntrack flush on revoke.
+5. Edge keys must be persistent in production (in the lab they are regenerated on every start).
+6. The edge firewall must restrict what tunnels may reach **on the edge itself** by destination address
    (only the tunnel gateway).
-6. Changing a WireGuard interface interrupts all its sessions for about 15 s: plan changes to the edge accordingly.
-7. Devices only see the setup gateway address as the client; user attribution must come from the broker's audit log.
+7. Changing a WireGuard interface interrupts all its sessions for about 15 s: plan changes to the edge accordingly.
+8. Devices only see the setup gateway address as the client; user attribution must come from the broker's audit log.
+9. Alias addresses: per setup a DNAT `10.200.N.0/24 → setup network`, only for the setup's own tunnel prefix.
+10. Workspaces: power mode = one namespace per setup (`lab enter`), alias mode = `10.200.N.0/24` routes.
 
-Mode-specific items: [lab-vrf.md](lab-vrf.md#carried-over-to-the-real-environment) and
-[lab-pbr.md](lab-pbr.md#carried-over-to-the-real-environment).
+Mode-specific items: [lab-vrf.md](lab-vrf.md#carried-over-to-the-real-environment),
+[lab-pbr.md](lab-pbr.md#carried-over-to-the-real-environment) and
+[lab-hybrid.md](lab-hybrid.md#carried-over-to-the-real-environment).

@@ -32,6 +32,8 @@ case "$EDGE_MODE" in
   hybrid) . /usr/local/lib/vlab/edge-hybrid.sh ;;
   *)   die "unknown EDGE_MODE $EDGE_MODE" ;;
 esac
+# alias addresses 10.200.N.0/24 for every setup, in every mode (E13)
+. /usr/local/lib/vlab/edge-alias.sh
 
 echo "$EDGE_MODE" > /run/vlab/edge-mode
 mark_ready

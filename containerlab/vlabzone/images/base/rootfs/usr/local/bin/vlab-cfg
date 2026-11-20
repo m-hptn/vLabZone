@@ -10,6 +10,7 @@
   vlab-cfg gw-ip <id>             -> transfer address of gw-<id> (PBR mode)
   vlab-cfg setup-prefix <id>      -> tunnel prefix of setup <id>: 10.250.<id>.0/24
   vlab-cfg tunnel-ip <id> <user>  -> tunnel address of <user> in setup <id>: 10.250.<id>.<user>
+  vlab-cfg alias-prefix <id>      -> alias network of setup <id>: 10.200.<id>.0/24
   vlab-cfg get edge.wg_port_base  -> scalar value
   vlab-cfg setup <id> <key>       -> value of one setup field
 
@@ -79,6 +80,15 @@ def tunnel_ip(cfg: dict, sid, user) -> str:
     return str(ipaddress.ip_network(setup_prefix(cfg, sid)).network_address + user)
 
 
+def alias_prefix(cfg: dict, sid) -> str:
+    """Alias mode (E13): setup N is also reachable as 10.200.N.0/24 (same /24 per setup as the tunnels)."""
+    sid = int(sid)
+    if not 1 <= sid <= 255:
+        raise ValueError(f"setup id {sid} outside 1-255")
+    net = ipaddress.ip_network(cfg["edge"]["alias_net"])
+    return str(ipaddress.ip_network((int(net.network_address) + (sid << 8), 24)))
+
+
 def gw_ip(cfg: dict, sid) -> str:
     return str(ipaddress.ip_network(cfg["edge"]["transfer"]["net"]).network_address + int(sid))
 
@@ -131,6 +141,8 @@ def main(argv: list[str]) -> None:
         print(gw_ip(cfg, argv[2]))
     elif cmd == "setup-prefix":
         print(setup_prefix(cfg, argv[2]))
+    elif cmd == "alias-prefix":
+        print(alias_prefix(cfg, argv[2]))
     elif cmd == "tunnel-ip":
         print(tunnel_ip(cfg, argv[2], argv[3]))
     elif cmd == "get":

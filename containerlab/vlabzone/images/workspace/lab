@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# lab – workspace CLI (stage 2 part: contexts that already exist).
+#
+#   lab list                      contexts on this workspace: setup, mode, address, last handshake
+#   lab enter <setup>             shell inside the setup's namespace (power mode), prompt [setupNN]
+#   lab enter <setup> -- CMD...   run one command there (scripts, tests)
+#
+# Power mode: each setup context lives in its own network namespace `setup<N>` with its
+# WireGuard interface. Inside, only that setup is reachable – several setups with the SAME
+# network (192.168.1.0/24) side by side (E09, E11). `lab connect|disconnect` (key generation,
+# booking via the broker) come with lab-agent in stage 3; until then tests/lib/wg.py creates
+# the contexts.
+set -euo pipefail
+die() { echo "lab: $*" >&2; exit 1; }
+
+ns_of() { echo "setup$1"; }
+
+list() {
+  printf '%-7s %-8s %-8s %-15s %s\n' SETUP MODE IFACE ADDRESS HANDSHAKE
+  show() {   # $1 netns or "", $2 mode
+    local ns=$1 mode=$2 run=()
+    [[ -n $ns ]] && run=(ip netns exec "$ns")
+    for ifc in $("${run[@]}" wg show interfaces 2>/dev/null); do
+      local addr hs setup
+      addr=$("${run[@]}" ip -4 -br addr show dev "$ifc" | awk '{print $3}')
+      hs=$("${run[@]}" wg show "$ifc" latest-handshakes | awk '{print $2}')
+      setup=$(cut -d. -f3 <<<"${addr%/*}")         # 10.250.<setup>.<user>
+      [[ ${hs:-0} -gt 0 ]] && hs="$(( $(date +%s) - hs ))s ago" || hs=never
+      printf '%-7s %-8s %-8s %-15s %s\n' "$setup" "$mode" "$ifc" "${addr%/*}" "$hs"
+    done
+  }
+  show "" desktop
+  for ns in $(ip netns list | awk '{print $1}' | grep -E '^setup[0-9]+$' || true); do show "$ns" power; done
+}
+
+enter() {
+  local setup=${1:-}; shift || true
+  [[ $setup =~ ^[0-9]+$ ]] || die "usage: lab enter <setup> [-- CMD...]"
+  local ns; ns=$(ns_of "$setup")
+  ip netns list | awk '{print $1}' | grep -qx "$ns" || die "no context for setup $setup in this workspace (namespace $ns)"
+  [[ ${1:-} == "--" ]] && shift
+  if [[ $# -gt 0 ]]; then
+    exec ip netns exec "$ns" "$@"
+  fi
+  exec ip netns exec "$ns" env LAB_SETUP="$setup" PS1="[setup$setup] \\w\\$ " bash --norc -i
+}
+
+case "${1:-}" in
+  list)  list ;;
+  enter) shift; enter "$@" ;;
+  connect|disconnect) die "$1 comes with lab-agent and the broker (stage 3)" ;;
+  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

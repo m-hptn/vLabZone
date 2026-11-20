@@ -21,8 +21,9 @@ ip addr add 10.198.0.2/24 dev eth3 && ip link set eth3 up
 ip link set eth2 up
 
 sysctl_set net.ipv4.ip_forward 1
-# Let TCP/UDP sockets of the default VRF answer for traffic of any VRF (WireGuard sockets stay there)
-sysctl_set net.ipv4.udp_l3mdev_accept 1
+# net.ipv4.{tcp,udp}_l3mdev_accept stay 0 on purpose: the WireGuard sockets receive on eth1
+# (default VRF) and need nothing from the VRFs. With 1, sockets of the edge itself would also
+# accept traffic arriving from inside a setup (see docs/nodes.md).
 
 mkdir -p /run/vlab/keys
 case "$EDGE_MODE" in

@@ -20,8 +20,9 @@ ip addr add 10.20.99.1/30 dev eth10 && ip link set eth10 up
 ip addr add 10.20.98.1/30 dev eth11 && ip link set eth11 up
 
 sysctl_set net.ipv4.ip_forward 1
-# Bridged workspace traffic must not run through the IP firewall
-sysctl_set net.bridge.bridge-nf-call-iptables 0
+# Bridged traffic must not run through the IP firewall. The sysctl only exists
+# if the host has br_netfilter loaded (Docker often loads it) – then it matters.
+[[ -e /proc/sys/net/bridge/bridge-nf-call-iptables ]] && sysctl_set net.bridge.bridge-nf-call-iptables 0
 
 nft -f "$VLAB_CONFIG_DIR/corp-fw.nft"
 log "corporate allowance loaded from corp-fw.nft"

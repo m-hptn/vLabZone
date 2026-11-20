@@ -188,6 +188,9 @@ E edge-ctl peer del --setup 12 --pubkey "$PUB"; W ip link del wg-s12
 
 ### Lab at a glance
 
+Every node's configuration and why it is needed: [`docs/nodes.md`](docs/nodes.md).
+
+
 | Node | Addresses | Purpose |
 |---|---|---|
 | `ws-std`, `ws-power`, `ws-ci` | 10.20.10.11–13 | workspaces (corporate) |
@@ -210,6 +213,7 @@ containerlab/vlabzone/
 ├── topology/              hwpool.clab.yml (lab), smoke.clab.yml
 ├── images/                base + role images (router, edge, workspace, device, serial, mgmt, broker), routeros/build.sh
 ├── config/                setups.yaml (setups, VLANs, devices), corp-fw.nft, users.yaml
+├── docs/                  nodes.md – configuration and rationale per node
 ├── tests/                 pytest suite, one module per experiment
 └── results/               experiment protocols and pcaps (not committed)
 ```

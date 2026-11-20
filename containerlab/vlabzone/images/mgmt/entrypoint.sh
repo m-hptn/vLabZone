@@ -13,6 +13,8 @@ for p in $PORTS; do
   ip link set "$p" master br0 up
   log "bridged $p"
 done
-sysctl_set net.bridge.bridge-nf-call-iptables 0
+# Bridged traffic must not run through the IP firewall. The sysctl only exists
+# if the host has br_netfilter loaded (Docker often loads it) – then it matters.
+[[ -e /proc/sys/net/bridge/bridge-nf-call-iptables ]] && sysctl_set net.bridge.bridge-nf-call-iptables 0
 mark_ready
 idle

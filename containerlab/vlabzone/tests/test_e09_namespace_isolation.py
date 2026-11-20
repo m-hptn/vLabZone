@@ -6,7 +6,7 @@ default route into the tunnel.
 """
 import pytest
 
-from tests.conftest import BOB, ident
+from tests.conftest import BOB, ident, in_setup
 from tests.lib.results import write_protocol
 
 pytestmark = pytest.mark.stage1
@@ -31,11 +31,11 @@ def test_e09_namespace_only_reaches_its_setup(lab, tunnel):
         "corp_svc_via_tunnel": corp_via_tunnel.returncode == 0,
         "corp_svc_outside_namespace": outside,
     }
-    ok = (inside and inside["setup"] == 12 and corp_direct.returncode != 0
-          and corp_via_tunnel.returncode != 0 and outside and outside["setup"] == "corp")
+    ok = (in_setup(inside, 12) and corp_direct.returncode != 0
+          and corp_via_tunnel.returncode != 0 and outside and outside["device"] == "corp-svc")
     write_protocol("E09", "Namespace isolates the power-user context", bool(ok), results)
 
-    assert inside and inside["setup"] == 12
+    assert in_setup(inside, 12), inside
     assert corp_direct.returncode != 0, "corp-svc reachable from inside the namespace"
     assert corp_via_tunnel.returncode != 0, "edge forwarded tunnel traffic to the corporate network"
-    assert outside and outside["setup"] == "corp", "workspace itself must still reach corp-svc"
+    assert outside and outside["device"] == "corp-svc", "workspace itself must still reach corp-svc"

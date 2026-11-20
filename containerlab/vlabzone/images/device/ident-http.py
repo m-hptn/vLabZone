@@ -4,9 +4,8 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-SETUP = os.environ["SETUP"]
 IDENTITY = {
-    "setup": int(SETUP) if SETUP.isdigit() else SETUP,
+    "switch": os.environ["SWITCH"],
     "device": os.environ["NAME"],
     "ip": os.environ["ADDR"],
 }

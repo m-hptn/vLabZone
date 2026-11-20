@@ -25,3 +25,7 @@ deploy/ansible/**/vault*.yml
 
 # containerlab runtime files next to the topologies
 *.clab.yml.annotations.json
+
+# draw.io backups
+.$*.bkp
+*.drawio.bkp

@@ -11,7 +11,6 @@ and a new setup in setups.yaml shows up in both labs.
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import sys
 from pathlib import Path
 
@@ -22,17 +21,19 @@ MODES = ("vrf", "pbr")
 
 DIAGRAM = {
     "vrf": """\
-#   ws-std ─┐
-#   ws-power┼─ corp-fw ─ UDP 51800-52099 ─ lab-edge ═ trunk (setup VLANs) ═ lab-sw ─┬─ setup 12 (VLAN 112)
-#   ws-ci  ─┘    │  └─ TCP 443/8443 ─ broker   │                                      └─ setup 7  (VLAN 107)
-#   corp-svc ────┘                       └──── lab-mgmt (10.198.0.0/24) ───┘
+#   ws-std ─┐                                                                  ┌═ lab-sys1 ── sys1-dev1..4
+#   ws-power┼─ corp-fw ─ UDP 51800-52099 ─ lab-edge ═ trunk (setup VLANs) ═ lab-agg ═┤
+#   ws-ci  ─┘    │  └─ TCP 443/8443 ─ broker   │                              └═ lab-sys2 ── sys2-dev1..4
+#   corp-svc ────┘                       └── lab-mgmt (10.198.0.0/24): edge, broker, agg, sys*
 #
-# VRF mode: the edge has a VRF, a VLAN interface and a WireGuard interface per setup.""",
+# VRF mode: the edge has a VRF, a VLAN interface and a WireGuard interface per setup.
+# Setups = groups of devices on one system switch (config/setups.yaml).""",
     "pbr": """\
-#   ws-std ─┐
-#   ws-power┼─ corp-fw ─ UDP 51820 ─ lab-edge ═ trunk (VLAN 199) ═ lab-sw ─┬─ gw-12 ─ setup 12 (VLAN 112)
-#   ws-ci  ─┘    │  └─ TCP 443/8443 ─ broker  │                             └─ gw-7  ─ setup 7  (VLAN 107)
-#   corp-svc ────┘                      └──── lab-mgmt (10.198.0.0/24) ───┘
+#   ws-std ─┐                                                                  ┌═ lab-sys1 ── sys1-dev1..4
+#   ws-power┼─ corp-fw ─ UDP 51820 ─ lab-edge ═ trunk (VLAN 199) ═ lab-agg ═══════┤
+#   ws-ci  ─┘    │  └─ TCP 443/8443 ─ broker  │                  ║║║           └═ lab-sys2 ── sys2-dev1..4
+#   corp-svc ────┘                      │                  gw-12, gw-7, gw-5 (trunk: 199 + setup VLAN)
+#                                       └── lab-mgmt (10.198.0.0/24): edge, broker, agg, sys*
 #
 # PBR mode: the edge has one wg0 and routes each tunnel IP (ip rule) to the
 # gateway gw-N of the booked setup via the transfer VLAN 199.""",
@@ -47,19 +48,20 @@ def node(image: str, **env) -> dict:
 
 
 def build(mode: str, cfg: dict) -> dict:
+    agg = cfg["aggregation"]
     nodes = {
         # corporate (simulated)
         "corp-fw": node("router", ROLE="corp-fw"),
-        "corp-svc": node("device", NAME="corp-svc", SETUP="corp", IP="10.20.20.10/24", GW="10.20.20.1"),
+        "corp-svc": node("device", NAME="corp-svc", SWITCH="corp", IP="10.20.20.10/24", GW="10.20.20.1"),
         "ws-std": node("workspace", WS_IP="10.20.10.11/24", WS_MODE="desktop"),
         "ws-power": node("workspace", WS_IP="10.20.10.12/24", WS_MODE="power"),
         "ws-ci": node("workspace", WS_IP="10.20.10.13/24", WS_MODE="alias"),
         # lab zone
         "lab-edge": node("edge", EDGE_MODE=mode),
         "broker": node("broker", EDGE_IMPL="${EDGE_IMPL:=linux}", EDGE_MODE=mode),
-        "lab-sw": node("router", ROLE="switch", EDGE_MODE=mode),
-        "lab-mgmt": node("mgmt", PORTS="eth1 eth2 eth3"),
+        f"lab-{agg['name']}": node("router", ROLE="switch", SWITCH=agg["name"], EDGE_MODE=mode),
     }
+    mgmt_members = ["lab-edge:eth3", "broker:eth2", f"lab-{agg['name']}:eth2"]
     links = [
         ("ws-std:eth1", "corp-fw:eth1"),
         ("ws-power:eth1", "corp-fw:eth2"),
@@ -67,22 +69,25 @@ def build(mode: str, cfg: dict) -> dict:
         ("corp-svc:eth1", "corp-fw:eth4"),
         ("corp-fw:eth10", "lab-edge:eth1"),   # the one-time allowance: WireGuard
         ("corp-fw:eth11", "broker:eth1"),     # the one-time allowance: broker API
-        ("lab-edge:eth3", "lab-mgmt:eth1"),
-        ("broker:eth2", "lab-mgmt:eth2"),
-        ("lab-sw:eth2", "lab-mgmt:eth3"),
-        ("lab-edge:eth2", "lab-sw:eth1"),     # trunk
+        ("lab-edge:eth2", f"lab-{agg['name']}:{agg['edge_port']}"),   # edge trunk
     ]
     wrong_gw = cfg["device_default_gateway"]
-    for s in cfg["setups"]:
-        prefix = ipaddress.ip_network(s["net"]).prefixlen
-        for d in s["devices"]:
-            nodes[d["name"]] = node("device", NAME=d["name"], SETUP=s["id"], IP=f"{d['ip']}/{prefix}", GW=wrong_gw)
-            links.append((f"{d['name']}:eth1", f"lab-sw:{d['port']}"))
-        if mode == "pbr":
+    for sw in cfg["switches"]:
+        name = f"lab-{sw['name']}"
+        nodes[name] = node("router", ROLE="switch", SWITCH=sw["name"], EDGE_MODE=mode)
+        links.append((f"lab-{agg['name']}:{sw['agg_port']}", f"{name}:eth1"))   # uplink trunk
+        mgmt_members.append(f"{name}:eth2")
+        for d in sw["devices"]:
+            nodes[d["name"]] = node("device", NAME=d["name"], SWITCH=sw["name"], IP=d["ip"], GW=wrong_gw)
+            links.append((f"{d['name']}:eth1", f"{name}:{d['port']}"))
+    if mode == "pbr":
+        for s in cfg["setups"]:
             gw = f"gw-{s['id']}"
             nodes[gw] = node("router", ROLE="gw", SETUP=s["id"])
-            links.append((f"{gw}:eth1", f"lab-sw:{s['pbr_gateway']['transfer_port']}"))
-            links.append((f"{gw}:eth2", f"lab-sw:{s['pbr_gateway']['setup_port']}"))
+            links.append((f"{gw}:eth1", f"lab-{agg['name']}:{s['pbr_gateway_port']}"))
+    mgmt_ports = [f"eth{i}" for i in range(1, len(mgmt_members) + 1)]
+    nodes["lab-mgmt"] = node("mgmt", PORTS=" ".join(mgmt_ports))
+    links += [(member, f"lab-mgmt:{port}") for member, port in zip(mgmt_members, mgmt_ports)]
 
     return {
         "name": f"vlabzone-{mode}",

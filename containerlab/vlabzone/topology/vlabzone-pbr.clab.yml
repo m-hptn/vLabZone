@@ -2,10 +2,11 @@
 #
 # vLabZone lab, edge mode PBR (idea.md §4, addresses §4.3, nodes: docs/lab-pbr.md)
 #
-#   ws-std ─┐
-#   ws-power┼─ corp-fw ─ UDP 51820 ─ lab-edge ═ trunk (VLAN 199) ═ lab-sw ─┬─ gw-12 ─ setup 12 (VLAN 112)
-#   ws-ci  ─┘    │  └─ TCP 443/8443 ─ broker  │                             └─ gw-7  ─ setup 7  (VLAN 107)
-#   corp-svc ────┘                      └──── lab-mgmt (10.198.0.0/24) ───┘
+#   ws-std ─┐                                                                  ┌═ lab-sys1 ── sys1-dev1..4
+#   ws-power┼─ corp-fw ─ UDP 51820 ─ lab-edge ═ trunk (VLAN 199) ═ lab-agg ═══════┤
+#   ws-ci  ─┘    │  └─ TCP 443/8443 ─ broker  │                  ║║║           └═ lab-sys2 ── sys2-dev1..4
+#   corp-svc ────┘                      │                  gw-12, gw-7, gw-5 (trunk: 199 + setup VLAN)
+#                                       └── lab-mgmt (10.198.0.0/24): edge, broker, agg, sys*
 #
 # PBR mode: the edge has one wg0 and routes each tunnel IP (ip rule) to the
 # gateway gw-N of the booked setup via the transfer VLAN 199.
@@ -29,7 +30,7 @@ topology:
       image: hwpool/device:latest
       env:
         NAME: corp-svc
-        SETUP: corp
+        SWITCH: corp
         IP: 10.20.20.10/24
         GW: 10.20.20.1
     ws-std:
@@ -56,53 +57,99 @@ topology:
       env:
         EDGE_IMPL: ${EDGE_IMPL:=linux}
         EDGE_MODE: pbr
-    lab-sw:
+    lab-agg:
       image: hwpool/router:latest
       env:
         ROLE: switch
+        SWITCH: agg
         EDGE_MODE: pbr
-    lab-mgmt:
-      image: hwpool/mgmt:latest
+    lab-sys1:
+      image: hwpool/router:latest
       env:
-        PORTS: eth1 eth2 eth3
-    dev-12-20:
+        ROLE: switch
+        SWITCH: sys1
+        EDGE_MODE: pbr
+    sys1-dev1:
       image: hwpool/device:latest
       env:
-        NAME: dev-12-20
-        SETUP: '12'
+        NAME: sys1-dev1
+        SWITCH: sys1
         IP: 192.168.1.20/24
         GW: 192.168.1.1
-    dev-12-21:
+    sys1-dev2:
       image: hwpool/device:latest
       env:
-        NAME: dev-12-21
-        SETUP: '12'
+        NAME: sys1-dev2
+        SWITCH: sys1
         IP: 192.168.1.21/24
+        GW: 192.168.1.1
+    sys1-dev3:
+      image: hwpool/device:latest
+      env:
+        NAME: sys1-dev3
+        SWITCH: sys1
+        IP: 192.168.1.20/24
+        GW: 192.168.1.1
+    sys1-dev4:
+      image: hwpool/device:latest
+      env:
+        NAME: sys1-dev4
+        SWITCH: sys1
+        IP: 192.168.1.22/24
+        GW: 192.168.1.1
+    lab-sys2:
+      image: hwpool/router:latest
+      env:
+        ROLE: switch
+        SWITCH: sys2
+        EDGE_MODE: pbr
+    sys2-dev1:
+      image: hwpool/device:latest
+      env:
+        NAME: sys2-dev1
+        SWITCH: sys2
+        IP: 192.168.1.20/24
+        GW: 192.168.1.1
+    sys2-dev2:
+      image: hwpool/device:latest
+      env:
+        NAME: sys2-dev2
+        SWITCH: sys2
+        IP: 192.168.1.21/24
+        GW: 192.168.1.1
+    sys2-dev3:
+      image: hwpool/device:latest
+      env:
+        NAME: sys2-dev3
+        SWITCH: sys2
+        IP: 192.168.1.22/24
+        GW: 192.168.1.1
+    sys2-dev4:
+      image: hwpool/device:latest
+      env:
+        NAME: sys2-dev4
+        SWITCH: sys2
+        IP: 192.168.1.20/24
         GW: 192.168.1.1
     gw-12:
       image: hwpool/router:latest
       env:
         ROLE: gw
         SETUP: '12'
-    dev-7-20:
-      image: hwpool/device:latest
-      env:
-        NAME: dev-7-20
-        SETUP: '7'
-        IP: 192.168.1.20/24
-        GW: 192.168.1.1
-    dev-7-21:
-      image: hwpool/device:latest
-      env:
-        NAME: dev-7-21
-        SETUP: '7'
-        IP: 192.168.1.21/24
-        GW: 192.168.1.1
     gw-7:
       image: hwpool/router:latest
       env:
         ROLE: gw
         SETUP: '7'
+    gw-5:
+      image: hwpool/router:latest
+      env:
+        ROLE: gw
+        SETUP: '5'
+    lab-mgmt:
+      image: hwpool/mgmt:latest
+      env:
+        PORTS: eth1 eth2 eth3 eth4 eth5
   links:
   - endpoints:
     - ws-std:eth1
@@ -123,38 +170,59 @@ topology:
     - corp-fw:eth11
     - broker:eth1
   - endpoints:
+    - lab-edge:eth2
+    - lab-agg:eth1
+  - endpoints:
+    - lab-agg:eth11
+    - lab-sys1:eth1
+  - endpoints:
+    - sys1-dev1:eth1
+    - lab-sys1:eth11
+  - endpoints:
+    - sys1-dev2:eth1
+    - lab-sys1:eth12
+  - endpoints:
+    - sys1-dev3:eth1
+    - lab-sys1:eth13
+  - endpoints:
+    - sys1-dev4:eth1
+    - lab-sys1:eth14
+  - endpoints:
+    - lab-agg:eth12
+    - lab-sys2:eth1
+  - endpoints:
+    - sys2-dev1:eth1
+    - lab-sys2:eth11
+  - endpoints:
+    - sys2-dev2:eth1
+    - lab-sys2:eth12
+  - endpoints:
+    - sys2-dev3:eth1
+    - lab-sys2:eth13
+  - endpoints:
+    - sys2-dev4:eth1
+    - lab-sys2:eth14
+  - endpoints:
+    - gw-12:eth1
+    - lab-agg:eth21
+  - endpoints:
+    - gw-7:eth1
+    - lab-agg:eth22
+  - endpoints:
+    - gw-5:eth1
+    - lab-agg:eth23
+  - endpoints:
     - lab-edge:eth3
     - lab-mgmt:eth1
   - endpoints:
     - broker:eth2
     - lab-mgmt:eth2
   - endpoints:
-    - lab-sw:eth2
+    - lab-agg:eth2
     - lab-mgmt:eth3
   - endpoints:
-    - lab-edge:eth2
-    - lab-sw:eth1
+    - lab-sys1:eth2
+    - lab-mgmt:eth4
   - endpoints:
-    - dev-12-20:eth1
-    - lab-sw:eth11
-  - endpoints:
-    - dev-12-21:eth1
-    - lab-sw:eth12
-  - endpoints:
-    - gw-12:eth1
-    - lab-sw:eth19
-  - endpoints:
-    - gw-12:eth2
-    - lab-sw:eth18
-  - endpoints:
-    - dev-7-20:eth1
-    - lab-sw:eth21
-  - endpoints:
-    - dev-7-21:eth1
-    - lab-sw:eth22
-  - endpoints:
-    - gw-7:eth1
-    - lab-sw:eth29
-  - endpoints:
-    - gw-7:eth2
-    - lab-sw:eth28
+    - lab-sys2:eth2
+    - lab-mgmt:eth5

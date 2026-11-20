@@ -184,7 +184,7 @@ W sh -c "ip link add wg-s12 type wireguard &&
      endpoint 10.20.99.2:$(E edge-ctl port --setup 12) allowed-ips 0.0.0.0/0 &&
   ip addr add 10.250.1.12/32 dev wg-s12 && ip link set wg-s12 up &&
   ip route add 192.168.1.0/24 dev wg-s12 src 10.250.1.12"
-W curl -s http://192.168.1.20    # {"setup": 12, "device": "dev-12-20", ..., "peer": "192.168.1.254"}
+W curl -s http://192.168.1.20    # {"switch": "sys1", "device": "sys1-dev1", ..., "peer": "192.168.1.254"}
 
 # clean up
 E edge-ctl peer del --setup 12 --pubkey "$PUB"; W ip link del wg-s12
@@ -202,9 +202,10 @@ Every node's configuration and why it is needed, per lab: [`docs/`](docs/README.
 | `corp-fw` | 10.20.10.1, .20.1, .99.1, .98.1 | corporate firewall, only UDP 51800–52099 / TCP 443, 8443 to the lab |
 | `lab-edge` | 10.20.99.2, 10.198.0.2, 192.168.1.254 per setup | WireGuard + VRF per setup, `edge-ctl` |
 | `broker` | 10.20.98.2, 10.198.0.1 | health endpoint on 8443 (API: stage 3) |
-| `lab-sw` | 10.198.0.3 | VLAN switch, `sw-port <port> <vlan>` |
-| `gw-12`, `gw-7` (PBR lab only) | 10.199.0.12 / .7, 192.168.1.254 | setup gateways: MASQUERADE, `gw-ctl nat on\|off` |
-| `dev-12-20/21`, `dev-7-20/21` | 192.168.1.20/21 in VLAN 112 / 107 | devices: HTTP identity, SSH `lab`/`lab`, syslog, iperf3 |
+| `lab-agg` | 10.198.0.3 | aggregation switch: edge, system switches, (PBR) gateways |
+| `lab-sys1`, `lab-sys2` | 10.198.0.4 / .5 | system switches, `sw-port <port> <vlan\|none>` regroups devices |
+| `gw-12`, `gw-7`, `gw-5` (PBR lab only) | 10.199.0.12 / .7 / .5, 192.168.1.254 | setup gateways: MASQUERADE, `gw-ctl nat on\|off` |
+| `sys1-dev1..4`, `sys2-dev1..4` | 192.168.1.20–22 (same IPs on purpose) | devices: HTTP identity, SSH `lab`/`lab`, syslog, iperf3. Setup 12 = sys1-dev1+2, setup 7 = sys1-dev3+4, setup 5 = sys2-dev1+2 (`config/setups.yaml`) |
 
 ---
 

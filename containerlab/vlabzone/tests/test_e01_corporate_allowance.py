@@ -6,7 +6,7 @@ encrypted WireGuard UDP is visible.
 """
 import pytest
 
-from tests.conftest import ALICE, ident
+from tests.conftest import ALICE, ident, in_setup
 from tests.lib.capture import capture
 from tests.lib.results import write_protocol
 
@@ -21,7 +21,7 @@ def test_e01_access_through_allowance(lab, tunnel):
         answer = ident(t.curl("http://192.168.1.20"))
 
     assert answer is not None, "no answer from 192.168.1.20 through the tunnel"
-    assert answer["setup"] == 12 and answer["device"] == "dev-12-20"
+    assert in_setup(answer, 12), answer
 
     non_wg = [l for l in cap.lines if not (" UDP" in l and ".518" in l)]
     assert cap.lines, "nothing captured on corp-fw eth10"

@@ -1,6 +1,10 @@
-# Single source of truth for setups, VLANs, networks, switch ports and devices.
-# Read by the topology generator (topology/gen.py), the edge, lab-sw, the
-# PBR gateways, the broker and the tests (idea.md §4.3).
+# Single source of truth for the lab: edge parameters, the switch/device INVENTORY
+# (fixed hardware) and the initial GROUPING of devices into setups (later owned by the broker).
+# Read by topology/gen.py, the edge, the switches, the PBR gateways and the tests (vlab-cfg).
+#
+# Real world (device_arc.drawio): MikroTik + Proxmox on an aggregation switch, which connects
+# the system switches. A setup = a dynamic group of devices on ONE system switch.
+
 edge:
   tunnel_net: 10.250.0.0/16
   tunnel_ip: 10.250.0.1
@@ -12,24 +16,58 @@ edge:
     edge_ip: 10.199.0.1
   alias_net: 10.200.0.0/16     # setup N -> 10.200.N.0/24
 
-setups:
-  - id: 12
-    vlan: 112
-    net: 192.168.1.0/24
-    gateway: 192.168.1.254     # edge (VRF mode) or gw-12 (PBR mode)
-    pbr_gateway: { setup_port: eth18, transfer_port: eth19 }
+# ---------------------------------------------------------------------------------------
+# Inventory: switches and devices (fixed hardware, cabling)
+# ---------------------------------------------------------------------------------------
+aggregation:
+  name: agg                    # node lab-agg
+  edge_port: eth1              # trunk to lab-edge
+  mgmt_ip: 10.198.0.3/24
+
+switches:                      # system switches, node lab-<name>
+  - name: sys1
+    agg_port: eth11            # port on lab-agg; the system switch uses eth1 as uplink
+    mgmt_ip: 10.198.0.4/24
+    devices:                   # same IPs on one switch on purpose (identical boards)
+      - { name: sys1-dev1, port: eth11, ip: 192.168.1.20/24 }
+      - { name: sys1-dev2, port: eth12, ip: 192.168.1.21/24 }
+      - { name: sys1-dev3, port: eth13, ip: 192.168.1.20/24 }
+      - { name: sys1-dev4, port: eth14, ip: 192.168.1.22/24 }
+  - name: sys2
+    agg_port: eth12
+    mgmt_ip: 10.198.0.5/24
     devices:
-      - { name: dev-12-20, ip: 192.168.1.20, port: eth11 }
-      - { name: dev-12-21, ip: 192.168.1.21, port: eth12 }
-      # acc-12-ser (192.168.1.30, eth13, serial) follows with the serial device
-  - id: 7
-    vlan: 107
-    net: 192.168.1.0/24
-    gateway: 192.168.1.254
-    pbr_gateway: { setup_port: eth28, transfer_port: eth29 }
-    devices:
-      - { name: dev-7-20, ip: 192.168.1.20, port: eth21 }
-      - { name: dev-7-21, ip: 192.168.1.21, port: eth22 }
+      - { name: sys2-dev1, port: eth11, ip: 192.168.1.20/24 }
+      - { name: sys2-dev2, port: eth12, ip: 192.168.1.21/24 }
+      - { name: sys2-dev3, port: eth13, ip: 192.168.1.22/24 }
+      - { name: sys2-dev4, port: eth14, ip: 192.168.1.20/24 }
 
 # Wrong on purpose: devices point to a non-existent gateway (E04)
 device_default_gateway: 192.168.1.1
+
+# ---------------------------------------------------------------------------------------
+# Initial grouping: which devices form which setup (one system switch per setup).
+# Devices in no setup get an access port without any VLAN (cut off).
+# ---------------------------------------------------------------------------------------
+setups:
+  - id: 12
+    vlan: 112
+    switch: sys1
+    net: 192.168.1.0/24
+    gateway: 192.168.1.254     # edge (VRF mode) or gw-12 (PBR mode)
+    devices: [sys1-dev1, sys1-dev2]
+    pbr_gateway_port: eth21    # PBR: port on lab-agg for gw-12 (trunk: 199 + setup VLAN)
+  - id: 7
+    vlan: 107
+    switch: sys1               # second setup on the same switch, same IPs
+    net: 192.168.1.0/24
+    gateway: 192.168.1.254
+    devices: [sys1-dev3, sys1-dev4]
+    pbr_gateway_port: eth22
+  - id: 5
+    vlan: 105
+    switch: sys2
+    net: 192.168.1.0/24
+    gateway: 192.168.1.254
+    devices: [sys2-dev1, sys2-dev2]
+    pbr_gateway_port: eth23

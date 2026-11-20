@@ -1,47 +1,56 @@
 # Lab `vlabzone-pbr` – edge with policy-based routing and a gateway per setup
 
-Start: `make up EDGE_MODE=pbr` · Containers: `clab-vlabzone-pbr-<node>` · 15 nodes ·
+Start: `make up EDGE_MODE=pbr` · Containers: `clab-vlabzone-pbr-<node>` · 22 nodes ·
 Topology: [`vlabzone-pbr.clab.yml`](../topology/vlabzone-pbr.clab.yml) (generated)
 
-The nodes that are the same in both labs (corporate firewall, workspaces, devices, broker, switch basics,
+The nodes that are the same in both labs (corporate firewall, workspaces, devices, broker, switches,
 management) are described in [common.md](common.md). This document covers what makes the PBR lab what it is.
 
 ---
 
 ## 1. Overview
 
+Modelled on the real setup (`device_arc.drawio`): the edge (later the MikroTik) and the Proxmox nodes hang
+on the aggregation switch, which connects the system switches. A **setup is a group of devices on one system
+switch**; several setups share a switch, and devices on one switch may have the same IP. In this lab the
+per-setup gateways `gw-N` sit on the aggregation switch with one trunk each, the way a VM on a Proxmox node would.
+
 ```text
-                  corporate (simulated)                    │                          lab zone
+                  corporate (simulated)                    │                            lab zone
                                                            │
- ws-std   10.20.10.11 ─┐                                   │                     ┌ eth19 ─ gw-12 ─ eth18 ┐
- ws-power 10.20.10.12 ─┼─ br-ws ┐                          │                     │  (VLAN 199)  (VLAN 112)├ eth11 dev-12-20 .20 ┐ setup 12
- ws-ci    10.20.10.13 ─┘        │                          │                     │                        └ eth12 dev-12-21 .21 ┘ VLAN 112
-                             corp-fw ─ eth10 ─ UDP 51820 ─ eth1 lab-edge eth2 ═ trunk 199 ═ eth1 lab-sw
- corp-svc 10.20.20.10 ── eth4 ─┘  └─ eth11 ─ TCP 443/8443 ─ eth1 broker   │ eth3       │
-                                                           │       │ eth2   │          └ eth29 ─ gw-7 ── eth28 ┐
-                                                           │       └──── lab-mgmt ── eth2    (VLAN 199)  (VLAN 107)├ eth21 dev-7-20 .20 ┐ setup 7
-                                                           │          10.198.0.0/24                           └ eth22 dev-7-21 .21 ┘ VLAN 107
+ ws-std   10.20.10.11 ─┐                                   │                               ┌ eth11 sys1-dev1 .20 ┐ setup 12
+ ws-power 10.20.10.12 ─┼─ br-ws ┐                          │                               ├ eth12 sys1-dev2 .21 ┘ VLAN 112
+ ws-ci    10.20.10.13 ─┘        │                          │            ┌═ eth11 ═ lab-sys1 ┼ eth13 sys1-dev3 .20 ┐ setup 7
+                             corp-fw ─ UDP 51820 ─ lab-edge ═ 199 ═ lab-agg                 └ eth14 sys1-dev4 .22 ┘ VLAN 107
+ corp-svc 10.20.20.10 ── eth4 ─┘  └─ TCP 443/8443 ─ broker         ║║║  │
+                                                           │       ║║║  └═ eth12 ═ lab-sys2 ┬ eth11 sys2-dev1 .20 ┐ setup 5
+                                                           │  eth21 ║║║ eth23                ├ eth12 sys2-dev2 .21 ┘ VLAN 105
+                                                           │  gw-12 gw-7 gw-5               ├ eth13 sys2-dev3 .22   ungrouped
+                                                           │  (trunk: 199 + setup VLAN)     └ eth14 sys2-dev4 .20   ungrouped
+                                                           │  lab-mgmt 10.198.0.0/24: edge, broker, agg, sys1, sys2
 ```
 
 The edge has **no interface in any setup**. It has one WireGuard interface for all tunnels and
 decides per tunnel source address which setup gateway a packet goes to:
 
 ```text
-              ┌──────────────────────── lab-edge ────────────────────────┐
-  UDP 51820 ──┤ wg0 10.250.0.1                                           │
-  eth1        │   │  ip rule from 10.250.1.12 iif wg0 → table 1012 ─┐    │
-  10.20.99.2  │   │  ip rule from 10.250.2.7  iif wg0 → table 1007 ─┼─ eth2.199 10.199.0.1 ── VLAN 199 ─┬─ gw-12 10.199.0.12 ─ 192.168.1.254 ─ VLAN 112 ─ setup 12
-              │   │  (no rule: main table, no route into setups)    │    │                              └─ gw-7  10.199.0.7  ─ 192.168.1.254 ─ VLAN 107 ─ setup 7
-              │   table 1012: default via 10.199.0.12               │    │
-              │   table 1007: default via 10.199.0.7  ──────────────┘    │
-              └──────────────────────────────────────────────────────────┘
+             ┌──────────────────────────── lab-edge ────────────────────────────┐
+ UDP 51820 ──┤ wg0 10.250.0.1                                                    │
+ (eth1)      │  ip rule from 10.250.1.12 iif wg0 → table 1012 → via 10.199.0.12 ─┼─┐
+             │  ip rule from 10.250.2.7  iif wg0 → table 1007 → via 10.199.0.7  ─┼─┤ eth2.199 10.199.0.1
+             │  (no rule → main table: no route into any setup)                  │ │ VLAN 199
+             └───────────────────────────────────────────────────────────────────┘ │
+     ┌─────────────────────────────────────────────────────────────────────────────┘
+     ├─ gw-12  10.199.0.12 │ 192.168.1.254 ─ VLAN 112 ─ setup 12 (sys1)
+     ├─ gw-7   10.199.0.7  │ 192.168.1.254 ─ VLAN 107 ─ setup 7  (sys1)
+     └─ gw-5   10.199.0.5  │ 192.168.1.254 ─ VLAN 105 ─ setup 5  (sys2)
 ```
 
 | Node | Role here |
 |---|---|
 | `lab-edge` | one `wg0`, an `ip rule` per booking, a routing table per setup (section 3) |
-| `gw-12`, `gw-7` | setup gateways: `.254` in the setup, MASQUERADE (section 4) |
-| `lab-sw` | trunk only with the transfer VLAN, extra ports for the gateways (section 5) |
+| `gw-12`, `gw-7`, `gw-5` | setup gateways: `.254` in the setup, MASQUERADE (section 4) |
+| `lab-agg`, `lab-sys1`, `lab-sys2` | edge trunk with only VLAN 199; gateway trunks; setup VLANs only towards gateways and system switches (section 5) |
 | all others | as in [common.md](common.md) |
 
 ### Addressing
@@ -52,30 +61,32 @@ decides per tunnel source address which setup gateway a packet goes to:
 | Corporate services | 10.20.20.0/24 | a second corporate net, so isolation from it can be tested |
 | corp-fw ↔ lab-edge | 10.20.99.0/30 | the **only** path for tunnel traffic |
 | corp-fw ↔ broker | 10.20.98.0/30 | the **only** path for API traffic |
-| Lab management | 10.198.0.0/24 | broker (.1) controls edge (.2) and switch (.3), invisible to the corporate side |
+| Lab management | 10.198.0.0/24 | broker .1, edge .2, lab-agg .3, lab-sys1 .4, lab-sys2 .5 – invisible to the corporate side |
 | WireGuard tunnels | 10.250.0.0/16 | edge 10.250.0.1 on `wg0`; context = 10.250.\<user\>.\<setup\>. **This address is what the edge routes on** |
 | Transfer | 10.199.0.0/24, VLAN 199 | edge .1, gateway of setup N = .N (`vlab-cfg gw-ip N`) |
-| Setups 12 and 7 | 192.168.1.0/24 (both), VLAN 112 / 107 | deliberately the **same** network; the setup's gateway gw-N is .254 |
+| Setups 12, 7, 5 | 192.168.1.0/24 (all), VLAN 112 / 107 / 105 | deliberately the **same** network; each setup's gateway gw-N is .254. 12 and 7 share system switch sys1 |
 
 ---
 
 ## 2. One request, hop by hop
 
-Alice in `ws-std` has a tunnel to setup 12 and runs `curl http://192.168.1.20`.
+Alice in `ws-std` has a tunnel to setup 12 and runs `curl http://192.168.1.20`. In setup 12 that address
+belongs to `sys1-dev1`. `sys1-dev3`, on the same switch, has the same address but is in setup 7.
 Each line was captured at the named hop (TCP SYN, shortened):
 
 | # | Hop | What is seen | What happened |
 |---|---|---|---|
-| 1 | `ws-std` wg-s12 | `10.250.1.12.52146 > 192.168.1.20.80 [S] mss 1380` | the route `192.168.1.0/24 dev wg-s12 src 10.250.1.12` sends it into the tunnel |
-| 2 | `ws-std` eth1 | `10.20.10.11.59283 > 10.20.99.2.51820: UDP, length 96` | WireGuard encrypts it. **Same port 51820 for every setup** |
-| 3 | `corp-fw` eth10 | `10.20.10.11.59283 > 10.20.99.2.51820: UDP` | the corporate side sees only encrypted UDP to one port |
-| 4 | `lab-edge` wg0 | `10.250.1.12.52146 > 192.168.1.20.80 [S]` | decrypted. The key allows only source `10.250.1.12/32` |
-| 5 | `lab-edge` eth2 | `vlan 199 … 10.250.1.12.52146 > 192.168.1.20.80` | `ip rule from 10.250.1.12 iif wg0 lookup 1012` → `default via 10.199.0.12`. Sent into the **transfer** VLAN 199, **not translated**: the tunnel address is still the source |
-| 6 | `lab-sw` eth19 | `10.250.1.12.52146 > 192.168.1.20.80` (no tag) | VLAN 199 access port of gw-12 |
-| 7 | `gw-12` eth1 | `10.250.1.12.52146 > 192.168.1.20.80` | the gateway receives the tunnel address |
-| 8 | `gw-12` eth2 | `192.168.1.254.52146 > 192.168.1.20.80` | **MASQUERADE here**, on the gateway: source becomes `192.168.1.254` |
-| 9 | `lab-sw` eth11 | `192.168.1.254.52146 > 192.168.1.20.80` | VLAN 112, setup 12's access port |
-| 10 | `dev-12-20` eth1 | `192.168.1.254.52146 > 192.168.1.20.80` | the device sees exactly what it sees in the VRF lab |
+| 1 | `ws-std` wg-s12 | `10.250.1.12.45574 > 192.168.1.20.80` | the route `192.168.1.0/24 dev wg-s12 src 10.250.1.12` sends it into the tunnel |
+| 2 | `ws-std` eth1 | `10.20.10.11.56682 > 10.20.99.2.51820: UDP, length 96` | WireGuard encrypts it. **Same port 51820 for every setup** |
+| 3 | `corp-fw` eth10 | `10.20.10.11.56682 > 10.20.99.2.51820: UDP` | the corporate side sees only encrypted UDP to one port |
+| 4 | `lab-edge` wg0 | `10.250.1.12.45574 > 192.168.1.20.80` | decrypted. The key allows only source `10.250.1.12/32` |
+| 5 | `lab-edge` eth2 | `vlan 199 … 10.250.1.12.45574 > 192.168.1.20.80` | `ip rule from 10.250.1.12 iif wg0 lookup 1012` → `default via 10.199.0.12`. Into the **transfer** VLAN 199, **not translated**: the tunnel address is still the source |
+| 6 | `lab-agg` eth1 → eth21 | `vlan 199 … 10.250.1.12.45574 > 192.168.1.20.80` | to gw-12's trunk port (the gateway's MAC was learned in VLAN 199 there) |
+| 7 | `gw-12` eth1.199 | `10.250.1.12.45574 > 192.168.1.20.80` | the gateway receives the tunnel address |
+| 8 | `gw-12` eth1.112 | `192.168.1.254.45574 > 192.168.1.20.80` | **MASQUERADE here**, on the gateway: source becomes `192.168.1.254` |
+| 9 | `lab-agg` eth21 → eth11 | `vlan 112 … 192.168.1.254.45574 > 192.168.1.20.80` | back out of the **same** trunk port, now in VLAN 112, on to sys1 |
+| 10 | `lab-sys1` eth1 → eth11 | `vlan 112 …` → untagged | only access ports in VLAN 112 get it. eth13 (sys1-dev3, same IP, VLAN 107) does not |
+| 11 | `sys1-dev1` eth1 | `192.168.1.254.45574 > 192.168.1.20.80` | the device sees exactly what it sees in the VRF lab |
 
 The edge's routing decision for Alice, as the kernel reports it:
 
@@ -87,15 +98,16 @@ $ ip route get 192.168.1.20 from 10.250.1.12 iif wg0
 The edge's conntrack entry shows **no translation**; that happens on gw-12:
 
 ```text
-src=10.250.1.12 dst=192.168.1.20 sport=54560 dport=80   src=192.168.1.20 dst=10.250.1.12 sport=80 dport=54560
+src=10.250.1.12 dst=192.168.1.20 sport=49174 dport=80   src=192.168.1.20 dst=10.250.1.12 sport=80 dport=49174
 ```
 
 The reply: the device answers `.254` (gw-12). gw-12 reverses the NAT and routes `10.250.1.12` via
 `10.199.0.1` back to the edge. The edge finds `10.250.0.0/16 dev wg0` in its main table, and WireGuard picks
 the peer whose allowed IPs contain `10.250.1.12`.
 
-**Where the setup is decided:** by the **`ip rule`** for the tunnel source address (hop 5). That rule is
-created per booking. If it points to the wrong table, the packet goes to the wrong gateway (section 6).
+**Where the setup is decided:** by the **`ip rule`** for the tunnel source address (hop 5), created per booking.
+If it points to the wrong table, the packet goes to the wrong gateway (section 6). On the switches, the VLAN of
+the access port decides which devices are in the setup (hop 10).
 
 ---
 
@@ -109,7 +121,7 @@ at all; it only decides which gateway a tunnel's traffic goes to.
 | Interface | Address | Purpose |
 |---|---|---|
 | eth1 | 10.20.99.2/30 | corporate side, receives only WireGuard UDP 51820 |
-| eth2 | – | trunk to lab-sw (VLAN 199 tagged only) |
+| eth2 | – | trunk to lab-agg (VLAN 199 tagged only) |
 | eth2.199 | 10.199.0.1/24 | transfer VLAN to the gateways gw-N (10.199.0.N) |
 | wg0 | 10.250.0.1/16, UDP **51820** | all tunnels, all setups |
 | eth3 | 10.198.0.2/24 | management (broker, stage 3) |
@@ -169,7 +181,7 @@ There is no NAT on the edge in this lab.
 | `edge-ctl status` | wg0 peers and number of rules per setup table |
 | `edge-ctl nat …` | refused: NAT runs on the gateways (`gw-ctl`) |
 
-**Tested by:** E01–E06, E09 (same tests as the VRF lab), E10 (PBR cases).
+**Tested by:** E01–E06, E09 (same tests as the VRF lab), E10 (PBR cases), E20.
 
 ```bash
 docker exec clab-vlabzone-pbr-lab-edge edge-ctl status
@@ -182,31 +194,34 @@ docker exec clab-vlabzone-pbr-lab-edge conntrack -L
 
 ---
 
-## 4. `gw-12`, `gw-7` – setup gateways
+## 4. `gw-12`, `gw-7`, `gw-5` – setup gateways
 
 **Role:** Connect the transfer VLAN to one setup. They take over what the VRF interfaces do on the VRF edge:
-the setup's gateway address and the MASQUERADE.
+the setup's gateway address and the MASQUERADE. In the real environment this is a candidate for a small VM or
+container on a Proxmox node (or a Proxmox SDN gateway), which is why it hangs on the aggregation switch.
 
 **Interfaces** (router image, `ROLE=gw`, `SETUP=N`, `images/router/roles/gw.sh`)
 
-| Interface | Address | Switch port |
+| Interface | Address | Switch side |
 |---|---|---|
-| eth1 | 10.199.0.N/24 (transfer) | VLAN 199 (gw-12: eth19, gw-7: eth29) |
-| eth2 | 192.168.1.254/24 (setup gateway) | the setup's VLAN (gw-12: eth18 / 112, gw-7: eth28 / 107) |
+| eth1 | – | **one trunk** to lab-agg (gw-12: eth21, gw-7: eth22, gw-5: eth23) carrying VLAN 199 + the setup's VLAN |
+| eth1.199 | 10.199.0.N/24 (transfer) | VLAN 199 |
+| eth1.\<setup VLAN\> | 192.168.1.254/24 (setup gateway) | VLAN 112 / 107 / 105 |
 
 ```text
 $ ip route        (gw-12)
-10.199.0.0/24 dev eth1 proto kernel scope link src 10.199.0.12
-10.250.0.0/16 via 10.199.0.1 dev eth1
-192.168.1.0/24 dev eth2 proto kernel scope link src 192.168.1.254
+10.199.0.0/24 dev eth1.199 proto kernel scope link src 10.199.0.12
+10.250.0.0/16 via 10.199.0.1 dev eth1.199
+192.168.1.0/24 dev eth1.112 proto kernel scope link src 192.168.1.254
 ```
 
 | Setting | Why | Without it |
 |---|---|---|
+| One trunk with two VLAN interfaces **[real]** | the same way a VM on a Proxmox node would be attached: one virtual NIC on a VLAN-aware bridge, or two tagged NICs | – |
 | Route `10.250.0.0/16 via 10.199.0.1`, **no default route** **[real]** | replies to the tunnels go back to the edge; nothing else is reachable from the setup | a default route would be a way out of the setup |
-| Forward only `eth1 → eth2` from `10.250.0.0/16`, replies via conntrack **[real]** | only tunnel traffic enters the setup. Nothing goes from the setup into the transfer VLAN | all gateways share VLAN 199: a setup could reach the other setups' gateways and the edge (E10 checks it can't) |
-| No forwarding `eth1 → eth1` **[real]** | a tunnel routed to this gateway cannot be bounced on to another gateway in VLAN 199 | a context of setup 12 could reach gw-7 through gw-12 |
-| MASQUERADE on eth2, in its own chain **[real]** | same reason as on the VRF edge: devices with a wrong gateway answer `.254` (E04). `gw-ctl nat on\|off` switches it | no answers from devices with a wrong gateway |
+| Forward only transfer → setup (`eth1.199 → eth1.<vlan>`) from `10.250.0.0/16`, replies via conntrack **[real]** | only tunnel traffic enters the setup. Nothing goes from the setup into the transfer VLAN | all gateways share VLAN 199: a setup could reach the other setups' gateways and the edge (E10 checks it can't) |
+| No forwarding transfer → transfer **[real]** | a tunnel routed to this gateway cannot be bounced on to another gateway in VLAN 199 | a context of setup 12 could reach gw-7 through gw-12 |
+| MASQUERADE on the setup interface, in its own chain **[real]** | same reason as on the VRF edge: devices with a wrong gateway answer `.254` (E04). `gw-ctl nat on\|off` switches it | no answers from devices with a wrong gateway |
 | Input: only ping from the edge (10.199.0.1) **[real]** | the gateway is diagnosable from the edge but not reachable from the setup or the tunnels | – |
 
 > **Note [real]:** all gateways share VLAN 199 and see the tunnel addresses. Separation between setups on
@@ -221,40 +236,37 @@ docker exec clab-vlabzone-pbr-gw-12 nft list ruleset
 
 ---
 
-## 5. `lab-sw` in this lab
+## 5. Switches in this lab
 
-Basics: [common.md](common.md#22-lab-sw--vlan-switch-basics).
-
-| Port | VLAN | Why |
-|---|---|---|
-| eth1 (trunk) | **199** tagged only | the edge only talks to the gateways. It gets **no** setup VLAN, so it has no direct way into any setup |
-| eth19, eth29 | 199 untagged | transfer ports of gw-12 and gw-7 |
-| eth18, eth28 | 112 / 107 untagged | setup ports of gw-12 and gw-7 |
-| eth11, eth12 / eth21, eth22 | 112 / 107 untagged | devices |
+Basics: [common.md](common.md#22-lab-agg-lab-sys1-lab-sys2--switches). In the PBR lab the edge only talks
+to the gateways: its trunk carries **only VLAN 199** and **no** setup VLAN, so the edge has no direct way
+into any setup. Each gateway's trunk carries VLAN 199 plus exactly its own setup VLAN
+(`bridge vlan show`, condensed):
 
 ```text
-port              vlan-id
-eth1              199
-eth11             112 PVID Egress Untagged
-eth12             112 PVID Egress Untagged
-eth19             199 PVID Egress Untagged
-eth18             112 PVID Egress Untagged
-eth21             107 PVID Egress Untagged
-eth22             107 PVID Egress Untagged
-eth29             199 PVID Egress Untagged
-eth28             107 PVID Egress Untagged
+lab-agg                      lab-sys1                                 lab-sys2
+eth1   199          ← edge   eth1   107 112  ← uplink                 eth1   105  ← uplink
+eth11  107 112      → sys1   eth11  112 PVID untagged  sys1-dev1      eth11  105 PVID untagged  sys2-dev1
+eth12  105          → sys2   eth12  112 PVID untagged  sys1-dev2      eth12  105 PVID untagged  sys2-dev2
+eth21  112 199      → gw-12  eth13  107 PVID untagged  sys1-dev3      eth13  –  (ungrouped)     sys2-dev3
+eth22  107 199      → gw-7   eth14  107 PVID untagged  sys1-dev4      eth14  –  (ungrouped)     sys2-dev4
+eth23  105 199      → gw-5
 ```
+
+The system switches are configured exactly as in the VRF lab. E02c checks every trunk against `vlab-cfg switch-config`.
 
 ---
 
-## 6. What can go wrong (E10)
+## 6. What can go wrong (E10, E20)
 
 | Misconfiguration | Result |
 |---|---|
 | Booking: `ip rule` missing | **fail-closed**: main table, no route into any setup |
-| Booking: `ip rule` points to the wrong table | **access to the wrong setup, both ways**: Alice booked setup 12 and gets answers from setup 7 |
+| Booking: `ip rule` points to the wrong table | **access to the wrong setup, both ways**: Alice booked setup 12 and gets answers from setup 7, the neighbouring setup on the same system switch |
 | Gateway: setup traffic towards the transfer VLAN | blocked by the gateway firewall (tested: tunnel and setup 12 cannot reach gw-7 or the edge) |
 | Edge: tunnels addressing other edge addresses | possible through the `local` table; now restricted by the input rule (ping only to 10.250.0.1) |
+| Grouping: device moved to another setup on its switch | works with one `sw-port` call; the gateways must forget the old ARP entry for the change to take effect at once |
+| Grouping: two devices with the same IP in one setup | **both answer ARP**; which one gets the traffic is random. The broker must refuse it |
 
 Every booking creates a routing rule, and every one of them can put a user into a foreign setup. That
 makes the broker's reconcile loop (stage 3) a security function here: it must compare every rule with
@@ -272,3 +284,5 @@ In addition to [common.md](common.md#4-carried-over-to-the-real-environment-both
 4. The broker must verify every rule against the bookings (reconcile), because a wrong table gives access to a foreign setup.
 5. Gateways: forward only transfer → setup for tunnel addresses, nothing back into the transfer VLAN.
 6. The edge firewall must restrict tunnel traffic to the edge itself by destination; with PBR, every edge address is otherwise addressable from the tunnels.
+7. The MikroTik's trunk to the aggregation switch carries only the transfer VLAN; gateways (e.g. on Proxmox) get
+   the transfer VLAN plus their setup VLAN; system switch trunks only the VLANs of their setups.

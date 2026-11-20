@@ -127,73 +127,102 @@ it can use the right driver later.
 docker exec clab-vlabzone-$L-ws-std curl -s http://10.20.98.2:8443/healthz
 ```
 
-### 2.2 `lab-sw` – VLAN switch (basics)
+### 2.2 `lab-agg`, `lab-sys1`, `lab-sys2` – switches
 
-**Role:** Puts each device into its setup's VLAN and connects the edge through one trunk. It stands in for
-the real lab switches; `sw-port` will become the Ansible automation. **Which VLANs the trunk carries and
-which extra ports exist depends on the lab**: see the "lab-sw in this lab" section of
-[lab-vrf.md](lab-vrf.md) and [lab-pbr.md](lab-pbr.md).
+**Role:** Model the real two-tier switching (`device_arc.drawio`): a Lancom **aggregation switch** with the
+edge (MikroTik) and the Proxmox nodes, and **system switches** with the devices. They stand in for the real
+Lancom switches; `sw-port` is what the broker's switch driver will do on them later.
 
-Ports in both labs:
+**Inventory and grouping** (`config/setups.yaml`): the switches, their ports and the devices (with IPs) are
+the fixed **inventory**. Which devices form which setup is the **grouping**: a setup is a group of devices on
+one system switch, several setups can share a switch, and devices can be regrouped at any time. Devices on one
+switch may have the same IP; they must not end up in the same setup. Devices that are in no setup sit on
+an access port without any VLAN.
 
-| Interface | VLAN | Connected to |
-|---|---|---|
-| eth1 | trunk (lab-specific) | lab-edge eth2 |
-| eth11, eth12 | 112 untagged (PVID) | dev-12-20, dev-12-21 |
-| eth21, eth22 | 107 untagged (PVID) | dev-7-20, dev-7-21 |
-| eth2 | 10.198.0.3/24, not bridged | lab-mgmt |
+| Switch | Ports |
+|---|---|
+| `lab-agg` | eth1: trunk to the edge · eth11 / eth12: trunks to sys1 / sys2 · eth21–23 (PBR lab): trunks to gw-12 / gw-7 / gw-5 · eth2: management 10.198.0.3 |
+| `lab-sys1` | eth1: uplink trunk · eth11–14: sys1-dev1–4 (setup 12: dev1, dev2 · setup 7: dev3, dev4) · eth2: management 10.198.0.4 |
+| `lab-sys2` | eth1: uplink trunk · eth11–14: sys2-dev1–4 (setup 5: dev1, dev2 · dev3, dev4 ungrouped) · eth2: management 10.198.0.5 |
 
-**Configuration** (`images/router/roles/switch.sh`, `images/router/sw-port`)
+Which VLANs each trunk carries depends on the lab: [lab-vrf.md](lab-vrf.md#4-switches-in-this-lab),
+[lab-pbr.md](lab-pbr.md#5-switches-in-this-lab).
+
+**Configuration** (router image, `ROLE=switch`, `SWITCH=agg|sys1|sys2`, `images/router/roles/switch.sh`,
+`images/router/sw-port`). Every port's role comes from `vlab-cfg switch-config <switch>`:
+
+```text
+$ vlab-cfg switch-config sys1          (inside any node; EDGE_MODE decides the edge-facing trunks)
+mgmt eth2 10.198.0.4/24
+trunk eth1 112 107
+access eth11 112 sys1-dev1
+access eth12 112 sys1-dev2
+access eth13 107 sys1-dev3
+access eth14 107 sys1-dev4
+```
 
 | Setting | Why | Without it |
 |---|---|---|
-| Bridge `br0` with `vlan_filtering 1` **[real]** | the bridge forwards by VLAN. Without filtering, a Linux bridge is one big L2 segment | setup 12 and setup 7 would share one broadcast domain: same IPs, ARP chaos, no isolation |
-| `vlan_default_pvid 0`, VLAN 1 removed from bridge and trunk **[real]** | new ports land in **no** VLAN instead of the default VLAN 1. A forgotten port is cut off | a new or forgotten port would end up in VLAN 1 together with every other unconfigured port |
-| Trunk carries only the VLANs the edge needs (`vlab-cfg trunk-vlans`) **[real]** | the edge gets exactly what its mode requires and nothing else | an edge with setup VLANs it doesn't use is one more way into the setups |
-| `sw-port <port> <vlan>` **[real]** | removes **all** VLANs from a port and sets exactly one untagged PVID. A port is always in exactly one setup (E20 moves devices this way) | ports could carry several VLANs and connect setups |
+| Bridge `br0` with `vlan_filtering 1` **[real]** | the bridge forwards by VLAN. Without filtering, a Linux bridge is one big L2 segment | setups 12 and 7 on sys1 would share one broadcast domain: same IPs, ARP chaos, no isolation |
+| `vlan_default_pvid 0`, VLAN 1 removed from bridge and trunks **[real]** | new ports land in **no** VLAN instead of the default VLAN 1. A forgotten port is cut off | a new or forgotten port would end up in VLAN 1 together with every other unconfigured port |
+| Each trunk carries only the VLANs needed behind it **[real]** | aggregation → system switch: only the setups on that switch. Edge trunk: what the edge mode needs. A VLAN only exists where its setup is | a setup VLAN on a trunk where it isn't needed is one more place where a mistake can connect it to something else |
+| `sw-port <port> <vlan\|none>` **[real]** | removes **all** VLANs from a port and sets exactly one untagged PVID, or none at all (ungrouped). A port is always in at most one setup. This is the whole regrouping operation (E20) | ports could carry several VLANs and connect setups |
+| Ungrouped devices: access port in no VLAN **[real]** | a device that belongs to no setup is unreachable for everyone (E05) | it would be reachable from whatever VLAN its port happened to be in |
 | Management IP on eth2, **outside** the bridge **[real]** | managed from 10.198.0.0/24 only; no address in any setup | a switch IP inside a setup would make it reachable from that setup |
-| Ports and VLANs from `setups.yaml`, missing ports skipped **[sim]** | one source of truth | – |
+| Ports and VLANs from `setups.yaml` via `vlab-cfg` **[sim]** | one source of truth; the test suite imports the same code (`tests/lib/labcfg.py`) | – |
 
-**Tested by:** E02 (no packets in the wrong setup), E05 (no broadcast between setups).
+**Tested by:** E02 (two setups on one switch with the same IP; across switches; trunk pruning), E05 (no
+broadcast between setups on one switch, ungrouped devices unreachable), E20 (regrouping).
 
 ```bash
-docker exec clab-vlabzone-$L-lab-sw bridge vlan show
-docker exec clab-vlabzone-$L-lab-sw bridge fdb show br br0 dynamic   # learned MACs per port and VLAN
-docker exec clab-vlabzone-$L-lab-sw sw-port eth12 107     # move dev-12-21 into setup 7 (undo: … eth12 112)
+docker exec clab-vlabzone-$L-lab-agg bridge vlan show
+docker exec clab-vlabzone-$L-lab-sys1 bridge vlan show
+docker exec clab-vlabzone-$L-lab-sys1 vlab-cfg switch-config sys1
+docker exec clab-vlabzone-$L-lab-sys1 bridge fdb show br br0 dynamic   # learned MACs per port and VLAN
+docker exec clab-vlabzone-$L-lab-sys1 sw-port eth12 107     # move sys1-dev2 into setup 7 (undo: … eth12 112)
 ```
 
-### 2.3 `dev-12-20`, `dev-12-21`, `dev-7-20`, `dev-7-21` – devices
+### 2.3 `sys1-dev1` … `sys2-dev4` – devices
 
-**Role:** Stand in for real hardware. Every device has a unique identity, so a test can prove where a
-packet arrived even though both setups use the same addresses. The devices are identical in both labs.
-They cannot tell which edge mode is in use: in both labs they see `192.168.1.254` as the client.
+**Role:** Stand in for real hardware on the system switches. A device is named after where it sits
+(`sys1-dev1`), **not** after a setup: which setup it is in depends only on the VLAN of its switch port, and
+that can change. The devices are identical in both labs and cannot tell which edge mode is in use: in both
+they see `192.168.1.254` as the client.
 
-**Configuration** (`images/device/entrypoint.sh`, env from the topology)
+| Device | IP | Initial setup |
+|---|---|---|
+| sys1-dev1 / sys1-dev2 | 192.168.1.20 / .21 | 12 |
+| sys1-dev3 / sys1-dev4 | 192.168.1.20 / .22 | 7 (same switch, sys1-dev3 has the same IP as sys1-dev1) |
+| sys2-dev1 / sys2-dev2 | 192.168.1.20 / .21 | 5 |
+| sys2-dev3 / sys2-dev4 | 192.168.1.22 / .20 | – (ungrouped) |
+
+**Configuration** (`images/device/entrypoint.sh`, env `NAME`, `SWITCH`, `IP`, `GW` from the topology)
 
 | Setting | Why |
 |---|---|
-| IP `192.168.1.20/.21` in **both** setups **[real]** | the core requirement: overlapping setup networks with original IPs |
+| Same IPs on one switch and across setups **[real]** | identical boards with the same factory address; overlapping setup networks with original IPs |
 | **Default gateway 192.168.1.1, which does not exist** **[sim, on purpose]** | real devices often have an arbitrary or wrong gateway. This shows that access works anyway thanks to MASQUERADE, and fails without it (E04) |
-| HTTP identity on port 80: `{"setup", "device", "ip", "peer"}` **[sim]** | `setup`/`device` show where the request landed; `peer` shows the source the device sees |
-| SSH (user `lab`/`lab`), banner `Setup 12 - device dev-12-20 - 192.168.1.20`, hostname `setup12-20` **[sim]** | E03: original IPs work for interactive access, and users can see which setup they are in |
+| HTTP identity on port 80: `{"switch", "device", "ip", "peer"}` **[sim]** | `device` shows which hardware answered; tests look up which setup that device belongs to. `peer` shows the source the device sees |
+| SSH (user `lab`/`lab`), banner `Device sys1-dev1 on switch sys1 - 192.168.1.20`, hostname `sys1-dev1` **[sim]** | E03: original IPs work for interactive access, and users can see which device they are on |
 | rsyslog → `/var/log/auth.log` **[sim]** | E03: shows that devices log 192.168.1.254 as the source, not the user |
 | `/etc/device.conf` with the own IP **[sim]** | E03: configuration that contains IPs stays valid, because nothing is renumbered |
 | `iperf3 -s` **[sim]** | throughput tests (E11, E22) |
 | Ready only once ports 80 and 22 listen **[sim]** | tests start right after `make up`. Without this, the first request after a deploy sometimes got "connection refused" |
 
 ```bash
-docker exec clab-vlabzone-$L-dev-12-20 tail /var/log/auth.log
-docker exec clab-vlabzone-$L-dev-12-20 ip route
+docker exec clab-vlabzone-$L-sys1-dev1 tail /var/log/auth.log
+docker exec clab-vlabzone-$L-sys1-dev1 ip route
 ```
 
 ### 2.4 `lab-mgmt`
 
-**Role:** The L2 segment 10.198.0.0/24 that connects broker (.1), edge (.2) and switch (.3).
+**Role:** The L2 segment 10.198.0.0/24 that connects broker (.1), edge (.2), lab-agg (.3), lab-sys1 (.4) and
+lab-sys2 (.5).
 
 | Setting | Why |
 |---|---|
-| Plain bridge over eth1–eth3, no IP **[sim]** | containerlab only has point-to-point links, so this stands in for a management switch/VLAN. It has no address, so it can't be reached |
-| Separate from the trunk and from the corporate side **[real]** | management traffic never shares a segment with setups or workspaces; E05 checks that neither side reaches it |
+| Plain bridge over eth1–eth5, no IP **[sim]** | containerlab only has point-to-point links, so this stands in for a management switch/VLAN. It has no address, so it can't be reached |
+| Separate from the trunks and from the corporate side **[real]** | management traffic never shares a segment with setups or workspaces; E05 checks that neither side reaches it |
 
 ---
 
@@ -216,8 +245,10 @@ docker exec clab-vlabzone-$L-dev-12-20 ip route
 
 1. Corporate allowance: WireGuard UDP to the edge (VRF: 51800–52099, PBR: 51820), TCP 443/8443 to the broker.
    Nothing else, and no routes to lab-internal networks.
-2. Switch: VLAN filtering, no default VLAN on ports, exactly one untagged VLAN per access port, trunk with only
-   what the edge needs, management outside the setups.
+2. Switches: VLAN filtering, no default VLAN on ports, at most one untagged VLAN per access port (none for
+   ungrouped devices), every trunk with only the VLANs needed behind it, management outside the setups.
+8. Regrouping devices = changing access-port VLANs on the system switch; afterwards the setup gateways must
+   forget stale ARP entries. Two devices with the same IP must never be grouped into one setup (the broker refuses).
 3. Peers only through the broker, `/32` allowed IPs per key, conntrack flush on revoke.
 4. Edge keys must be persistent in production (in the lab they are regenerated on every start).
 5. The edge firewall must restrict what tunnels may reach **on the edge itself** by destination address

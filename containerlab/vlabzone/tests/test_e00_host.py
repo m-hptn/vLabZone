@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.lib import labcfg
+
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,11 +25,23 @@ def test_image_built(image):
     assert res.returncode == 0, f"hwpool/{image}:{VERSION} missing – run make build"
 
 
-def test_setups_config_consistent(setups):
-    vlans = [s["vlan"] for s in setups["setups"]]
-    assert len(vlans) == len(set(vlans)), "VLAN IDs must be unique"
-    ports = [d["port"] for s in setups["setups"] for d in s["devices"]]
-    assert len(ports) == len(set(ports)), "switch ports must be unique"
+def test_setups_config_consistent(cfg):
+    setups = cfg["setups"]
+    for key in ("id", "vlan"):
+        values = [s[key] for s in setups]
+        assert len(values) == len(set(values)), f"setup {key}s must be unique"
+    for sw in cfg["switches"]:
+        ports = [d["port"] for d in sw["devices"]]
+        assert len(ports) == len(set(ports)), f"{sw['name']}: switch ports must be unique"
+    switch_of = {d["name"]: sw["name"] for sw in cfg["switches"] for d in sw["devices"]}
+    grouped = [d for s in setups for d in s["devices"]]
+    assert len(grouped) == len(set(grouped)), "a device can be in one setup only"
+    for s in setups:
+        for d in s["devices"]:
+            assert switch_of.get(d) == s["switch"], f"setup {s['id']}: {d} is not on switch {s['switch']}"
+        ips = [labcfg.device(d)["ip"] for d in s["devices"]]
+        # same IPs on one switch are fine – but never inside one setup (the broker must refuse it)
+        assert len(ips) == len(set(ips)), f"setup {s['id']}: duplicate IP {ips}"
 
 
 def test_topologies_up_to_date():

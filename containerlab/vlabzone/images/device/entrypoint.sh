@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # hwpool/device – simulated lab device (also used for corp-svc).
 #
-# Env: NAME (dev-12-20), SETUP (12 | corp), IP (192.168.1.20/24), GW (192.168.1.1)
+# Env: NAME (sys1-dev1), SWITCH (sys1 | corp), IP (192.168.1.20/24), GW (192.168.1.1)
+# A device is a piece of hardware on a system switch. Which setup it belongs to is NOT
+# fixed – it is decided by the VLAN of its switch port (grouping, later by the broker).
 # Every device has a unique identity so tests can tell where a packet ended up:
-#   HTTP :80  -> {"setup", "device", "ip", "peer"}
-#   SSH  :22  -> banner + prompt with setup number (user lab / password lab)
+#   HTTP :80  -> {"switch", "device", "ip", "peer"}
+#   SSH  :22  -> banner + prompt with switch and device name (user lab / password lab)
 #   syslog    -> /var/log/auth.log shows the source IP of every SSH login
 #   /etc/device.conf contains the device's own IP; iperf3 server on :5201
 set -euo pipefail
 . /usr/local/lib/vlab/common.sh
 
-NAME=${NAME:?} SETUP=${SETUP:?} IP=${IP:?} GW=${GW:-}
+NAME=${NAME:?} SWITCH=${SWITCH:?} IP=${IP:?} GW=${GW:-}
 ADDR=${IP%/*}
-log "hwpool/device ${VLAB_VERSION:-dev} $NAME setup=$SETUP ip=$IP gw=${GW:-none}"
+log "hwpool/device ${VLAB_VERSION:-dev} $NAME switch=$SWITCH ip=$IP gw=${GW:-none}"
 
 wait_if 60 eth1
 ip addr add "$IP" dev eth1
@@ -20,17 +22,16 @@ ip link set eth1 up
 # On purpose the setup devices get a gateway that does not exist (192.168.1.1, E04)
 [[ -n "$GW" ]] && ip route add default via "$GW"
 
-if [[ "$SETUP" =~ ^[0-9]+$ ]]; then label="setup$SETUP"; else label="$SETUP"; fi
-hostname "$label-${NAME##*-}" 2>/dev/null || true
-tag="[$label] $NAME ($ADDR)"
+hostname "$NAME" 2>/dev/null || true
+tag="[$NAME] $ADDR"
 
 cat > /etc/device.conf <<CONF
 # device configuration ($NAME)
 name=$NAME
-setup=$SETUP
+switch=$SWITCH
 ip=$ADDR
 CONF
-printf 'Setup %s - device %s - %s\n' "$SETUP" "$NAME" "$ADDR" > /etc/issue.net
+printf 'Device %s on switch %s - %s\n' "$NAME" "$SWITCH" "$ADDR" > /etc/issue.net
 echo "PS1='$tag \\w\\$ '" > /etc/profile.d/vlab-prompt.sh
 
 rsyslogd
@@ -39,7 +40,7 @@ mkdir -p /run/sshd
 /usr/sbin/sshd
 iperf3 -s -D >/dev/null
 
-export NAME SETUP ADDR
+export NAME SWITCH ADDR
 python3 /usr/local/bin/ident-http.py &
 http_pid=$!
 # Only report ready once the services actually listen (tests start right after `make up`)

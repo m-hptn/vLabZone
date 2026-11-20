@@ -15,7 +15,8 @@ import time
 
 import pytest
 
-from tests.conftest import ALICE, ident
+from tests.conftest import ALICE, ident, in_setup
+from tests.lib import labcfg
 from tests.lib.capture import capture
 from tests.lib.results import write_protocol
 from tests.lib.wg import tunnel_ip
@@ -57,7 +58,7 @@ def pbr_only(edge_mode):
 def test_e10_pbr_missing_rule_fails_closed(lab, tunnel, pbr_only):
     edge = lab["lab-edge"]
     t = tunnel("ws-std", ALICE, 12)
-    assert ident(t.curl("http://192.168.1.20"))["setup"] == 12
+    assert in_setup(ident(t.curl("http://192.168.1.20")), 12)
 
     edge.run(f"ip rule del from {ALICE_IP} iif wg0")
     try:
@@ -82,15 +83,15 @@ def test_e10_pbr_wrong_table_reaches_wrong_setup(lab, tunnel, pbr_only):
         edge.run(f"ip rule del from {ALICE_IP} iif wg0 && ip rule add from {ALICE_IP} iif wg0 lookup 1012 pref 10000")
 
     write_protocol("E10-pbr-wrong-table", "PBR: ip rule points to the wrong table", True, {"answer": answer},
-                   observations="Alice booked setup 12 but lands in setup 7 – nothing else stops it",
+                   observations="Alice booked setup 12 but lands in setup 7 (same system switch) – nothing else stops it",
                    consequence="PBR is NOT fail-closed: one wrong per-booking rule gives access to a foreign setup")
-    assert answer and answer["setup"] == 7, f"expected to land in setup 7, got {answer}"
+    assert in_setup(answer, 7), f"expected to land in setup 7, got {answer}"
 
 
 def test_e10_pbr_gateways_isolated(lab, tunnel, pbr_only):
     """Over the shared transfer VLAN, neither a tunnel nor a setup reaches another setup's gateway."""
     t = tunnel("ws-std", ALICE, 12, routes=("192.168.1.0/24", "10.199.0.0/24"))
-    dev = lab["dev-12-20"]
+    dev = lab[labcfg.device_at(12, "192.168.1.20")]
     dev.run("ip route replace default via 192.168.1.254")
     try:
         attempts = {
@@ -165,7 +166,8 @@ def test_e10_vrf_tunnel_in_wrong_vrf_leaks_one_way(lab, tunnel, vrf_only):
         while int(edge.run("wg show wg-s12 latest-handshakes | awk '{print $2}'").stdout or 0) <= moved_at:
             assert time.monotonic() - t0 < 40, "no new handshake after the move"
             t.curl("http://192.168.1.20", timeout=1)
-        with capture(lab["lab-sw"], "eth21", "tcp port 80", name="e10-vrf-wrong-vrf-eth21") as cap:
+        port7 = labcfg.device(labcfg.device_at(7, "192.168.1.20"))["port"]
+        with capture(lab["lab-sys1"], port7, "tcp port 80", name="e10-vrf-wrong-vrf-setup7-port") as cap:
             answer = ident(t.curl("http://192.168.1.20", timeout=3))
     finally:
         handle = edge.run("nft -a list chain inet edge setups | awk '/\"eth2.107\"/ && /\"wg-s12\"/ {print $NF}'").stdout.strip()
@@ -174,7 +176,7 @@ def test_e10_vrf_tunnel_in_wrong_vrf_leaks_one_way(lab, tunnel, vrf_only):
     # Changing the VRF membership restarts wg-s12: the edge loses the session keys and the
     # workspace only re-handshakes after WireGuard's retry timer (~15 s).
     t0 = time.monotonic()
-    while not ident(t.curl("http://192.168.1.20", timeout=1)):
+    while not in_setup(ident(t.curl("http://192.168.1.20", timeout=1)), 12):
         assert time.monotonic() - t0 < 40, "edge not restored within 40 s"
     recovery = round(time.monotonic() - t0, 1)
 

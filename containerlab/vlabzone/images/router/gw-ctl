@@ -3,9 +3,10 @@
 #   gw-ctl nat on|off    MASQUERADE into the setup on/off (experiment E04)
 #   gw-ctl status
 set -euo pipefail
+SIF=$(cat /run/vlab-setup-if)
 case "${1:-status}:${2:-}" in
   nat:off) nft flush chain inet gw nat; echo "NAT off" ;;
-  nat:on)  nft flush chain inet gw nat; nft add rule inet gw nat oifname eth2 masquerade; echo "NAT on" ;;
-  status:) ip -br addr show dev eth1; ip -br addr show dev eth2; echo "masquerade rules: $(nft list chain inet gw nat | grep -c masquerade || true)" ;;
+  nat:on)  nft flush chain inet gw nat; nft add rule inet gw nat oifname "$SIF" masquerade; echo "NAT on" ;;
+  status:) ip -br addr show | grep -E '^eth1\.'; echo "masquerade rules: $(nft list chain inet gw nat | grep -c masquerade || true)" ;;
   *) echo "usage: gw-ctl nat on|off | status" >&2; exit 2 ;;
 esac

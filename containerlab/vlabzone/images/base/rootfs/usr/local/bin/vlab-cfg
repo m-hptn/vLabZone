@@ -2,13 +2,20 @@
 """Query config/setups.yaml (mounted at /etc/vlab) from shell scripts.
 
   vlab-cfg setups                 -> "<id> <vlan> <net> <gateway>" per setup
-  vlab-cfg ports                  -> "<port> <vlan> <node>" per lab-sw access port
-                                     (devices; plus the gw-N ports if EDGE_MODE=pbr)
-  vlab-cfg trunk-vlans            -> VLANs on the trunk to the edge (depends on EDGE_MODE)
+  vlab-cfg switch-config <name>   -> how switch <name> (agg | sys1 | …) is configured:
+                                       mgmt <port> <ip/prefix>
+                                       trunk <port> <vlan> [<vlan> …]
+                                       access <port> <vlan|none> <device>
+                                     depends on EDGE_MODE (vrf | pbr)
   vlab-cfg gw-ip <id>             -> transfer address of gw-<id> (PBR mode)
   vlab-cfg get edge.wg_port_base  -> scalar value
   vlab-cfg setup <id> <key>       -> value of one setup field
+
+The same functions are imported by the test suite (tests/lib/labcfg.py), so the
+lab and the tests always agree on what belongs where.
 """
+from __future__ import annotations
+
 import ipaddress
 import os
 import sys
@@ -16,35 +23,93 @@ import sys
 import yaml
 
 CFG = os.path.join(os.environ.get("VLAB_CONFIG_DIR", "/etc/vlab"), "setups.yaml")
-MODE = os.environ.get("EDGE_MODE", "vrf")
 
 
-def setup(cfg, sid):
+def load(path: str = CFG) -> dict:
+    with open(path) as fh:
+        return yaml.safe_load(fh)
+
+
+def setup(cfg: dict, sid) -> dict:
     return next(s for s in cfg["setups"] if s["id"] == int(sid))
 
 
-def main(argv):
-    with open(CFG) as fh:
-        cfg = yaml.safe_load(fh)
+def switch(cfg: dict, name: str) -> dict:
+    return next(s for s in cfg["switches"] if s["name"] == name)
+
+
+def device(cfg: dict, name: str) -> dict:
+    for sw in cfg["switches"]:
+        for d in sw["devices"]:
+            if d["name"] == name:
+                return {**d, "switch": sw["name"]}
+    raise KeyError(name)
+
+
+def setup_of(cfg: dict, device_name: str) -> dict | None:
+    """The setup a device is grouped into initially, None if ungrouped."""
+    return next((s for s in cfg["setups"] if device_name in s["devices"]), None)
+
+
+def device_at(cfg: dict, setup_id: int, ip: str) -> str:
+    """Which device answers on <ip> inside setup <setup_id>."""
+    s = setup(cfg, setup_id)
+    hits = [n for n in s["devices"] if device(cfg, n)["ip"].split("/")[0] == ip]
+    if len(hits) != 1:
+        raise LookupError(f"setup {setup_id}: {len(hits)} devices with {ip}")
+    return hits[0]
+
+
+def gw_ip(cfg: dict, sid) -> str:
+    return str(ipaddress.ip_network(cfg["edge"]["transfer"]["net"]).network_address + int(sid))
+
+
+def switch_config(cfg: dict, name: str, mode: str) -> list[tuple]:
+    """Ports of a switch: ("mgmt", port, ip), ("trunk", port, [vlans]), ("access", port, vlan|None, device)."""
+    transfer = cfg["edge"]["transfer"]["vlan"]
+    out: list[tuple] = []
+    if name == cfg["aggregation"]["name"]:
+        agg = cfg["aggregation"]
+        out.append(("mgmt", "eth2", agg["mgmt_ip"]))
+        # VRF: the edge is the gateway in every setup. PBR: the edge only talks to the gateways.
+        edge_vlans = [s["vlan"] for s in cfg["setups"]] if mode == "vrf" else [transfer]
+        out.append(("trunk", agg["edge_port"], edge_vlans))
+        for sw in cfg["switches"]:
+            # only the VLANs of the setups that live on that system switch
+            out.append(("trunk", sw["agg_port"], [s["vlan"] for s in cfg["setups"] if s["switch"] == sw["name"]]))
+        if mode == "pbr":
+            for s in cfg["setups"]:
+                # gw-N sits on the aggregation switch like a VM on a Proxmox node: one trunk
+                out.append(("trunk", s["pbr_gateway_port"], [transfer, s["vlan"]]))
+    else:
+        sw = switch(cfg, name)
+        out.append(("mgmt", "eth2", sw["mgmt_ip"]))
+        out.append(("trunk", "eth1", [s["vlan"] for s in cfg["setups"] if s["switch"] == name]))
+        for d in sw["devices"]:
+            s = setup_of(cfg, d["name"])
+            out.append(("access", d["port"], s["vlan"] if s else None, d["name"]))
+    return out
+
+
+def main(argv: list[str]) -> None:
+    cfg = load()
+    mode = os.environ.get("EDGE_MODE", "vrf")
     cmd = argv[1] if len(argv) > 1 else "setups"
-    transfer = cfg["edge"]["transfer"]
     if cmd == "setups":
         for s in cfg["setups"]:
             print(s["id"], s["vlan"], s["net"], s["gateway"])
-    elif cmd == "ports":
-        for s in cfg["setups"]:
-            for d in s.get("devices", []):
-                print(d["port"], s["vlan"], d["name"])
-            if MODE == "pbr":
-                gw = s["pbr_gateway"]
-                print(gw["setup_port"], s["vlan"], f"gw-{s['id']}")
-                print(gw["transfer_port"], transfer["vlan"], f"gw-{s['id']}")
-    elif cmd == "trunk-vlans":
-        # VRF: the edge itself sits in every setup VLAN. PBR: the edge only talks to the gateways.
-        vlans = [s["vlan"] for s in cfg["setups"]] if MODE == "vrf" else [transfer["vlan"]]
-        print(*vlans)
+    elif cmd == "switch-config":
+        for entry in switch_config(cfg, argv[2], mode):
+            kind, port, *rest = entry
+            if kind == "mgmt":
+                print("mgmt", port, rest[0])
+            elif kind == "trunk":
+                print("trunk", port, *rest[0])
+            else:
+                vlan, dev = rest
+                print("access", port, vlan if vlan else "none", dev)
     elif cmd == "gw-ip":
-        print(ipaddress.ip_network(transfer["net"]).network_address + int(argv[2]))
+        print(gw_ip(cfg, argv[2]))
     elif cmd == "get":
         val = cfg
         for part in argv[2].split("."):

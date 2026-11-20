@@ -109,7 +109,7 @@ vLabZone/containerlab/vlabzone/
   from the official CHR disk image (download URL + sha256 pinned in `group_vars`; nothing proprietary in git).
   Runs as QEMU/KVM inside the container: ~256–512 MB RAM, 1 vCPU, boot time 30–90 s → tests wait for readiness.
 - **Same wiring as the Linux edge:** containerlab maps `eth1, eth2, …` to `ether2, ether3, …`
-  (`ether1` = management). corp side = ether2, trunk to `lab-sw` = ether3, lab-mgmt = ether4. The rest of the
+  (`ether1` = management). corp side = ether2, trunk to `lab-agg` = ether3, lab-mgmt = ether4. The rest of the
   topology, the addressing and all workspace/device logic stay unchanged.
 - **Config from the same source:** `images/routeros/render.py` turns `config/setups.yaml` into a startup
   `.rsc` (clab `startup-config`):
@@ -180,6 +180,29 @@ vLabZone/containerlab/vlabzone/
     `EDGE_IMPL` switch in Makefile/topology; stage 1–2 suites pass with `EDGE_IMPL=routeros` (peers added
     via REST from the test fixtures).
 
+### Stage 2a – Real-world switching: aggregation + system switches, dynamic setups  ✅ implemented 2026-11-20
+Real topology (`device_arc.drawio`): MikroTik and Proxmox nodes on a Lancom aggregation switch, which
+connects 3 system switches with 4 devices each. A setup = a dynamic group of devices on **one** system
+switch (several setups per switch; spanning switches maybe later). Devices on one switch can share an IP.
+
+A1. `config/setups.yaml` split into **inventory** (system switches, ports, devices + IPs – fixed hardware)
+    and **initial grouping** (setups: id, VLAN, switch, device list – later owned by the broker).
+    Lab inventory: `sys1`, `sys2` with 4 devices each, same IPs on purpose (e.g. sys1-dev1 and sys1-dev3 both
+    192.168.1.20). Grouping: setup 12 = sys1-dev1+dev2, setup 7 = sys1-dev3+dev4 (two setups on one
+    switch, identical IPs), setup 5 = sys2-dev1+dev2. Ungrouped devices: access port in no VLAN.
+A2. Topology generator: `lab-agg` + `lab-sys1`, `lab-sys2` instead of `lab-sw`. Trunks carry only what is
+    needed: agg → edge (VRF: all setup VLANs, PBR: 199), agg → sysN (VLANs of the setups on that switch),
+    PBR: agg → gw-N one trunk (199 + setup VLAN, like a VM on a Proxmox node). Management: agg .3, sysN .3+N.
+A3. Switch roles `agg` and `access` (router image), `sw-port` unchanged; trunk VLANs via `vlab-cfg`.
+A4. Devices named after the hardware (`sys1-dev1`), identity `{switch, device, ip, peer}` – no fixed setup;
+    tests map device → setup from the grouping.
+A5. Tests: E01–E06/E09 adapted. E02/E05 now check isolation between two setups on the **same** switch and
+    across switches, plus trunk pruning (setup 12's VLAN absent on sys2's trunk). E20 (moved forward):
+    regroup a device between setups on one switch via `sw-port`; negative case: grouping two same-IP
+    devices into one setup → documents the conflict the broker must refuse.
+A6. Docs (`docs/*`) and README updated for both labs; full suite green in both labs.
+Out of scope here: creating/deleting setups at runtime (needs `edge-ctl setup add|del`, comes with the broker, stage 3).
+
 ### Stage 3 – Broker & agent (E07, E08, E12, E18–E20, E27 part 2)
 15. FastAPI broker + SQLite (`schema.sql`: users, setups, devices, bookings, contexts, audit), token auth,
     self-signed TLS on 443; endpoints per idea §5.7; drivers behind `drivers/base.py` interface.
@@ -204,7 +227,7 @@ Each stage: full regression suite of earlier stages, then commit (one or more co
 - Fresh Debian 12 VM and Ubuntu 24.04 VM: `ansible-playbook -i <inv> site.yml --tags all,deploy` ends with a passing smoke test.
 - `make host-check` – modules loaded, containerlab/docker present.
 - `make build && make up` – `sudo containerlab inspect -t topology/hwpool.clab.yml` shows all nodes running.
-- Manual smoke: `docker exec clab-hwpool-ws-std curl -s http://192.168.1.20` → `"setup": 12`.
+- Manual smoke: README "Try it by hand" → `{"switch": "sys1", "device": "sys1-dev1", …}`.
 - `make test` (stage markers) in `EDGE_MODE=vrf` and `pbr`; `make reset` returns to baseline in seconds.
 - `make test EDGE_IMPL=routeros EDGE_MODE=vrf|pbr` passes on a KVM host; on a host without KVM the
   RouterOS tests are skipped with a reason, and the preflight reports that the variant is unavailable.

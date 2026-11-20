@@ -6,7 +6,7 @@ they answer to 192.168.1.254 on their own subnet; without it, replies to
 """
 import pytest
 
-from tests.conftest import ALICE, ident
+from tests.conftest import ALICE, ident, in_setup
 from tests.lib.results import write_protocol
 
 pytestmark = pytest.mark.stage1
@@ -25,7 +25,7 @@ def test_e04_masquerade_is_required(lab, tunnel, nat, edge_mode):
 
     assert with_nat and with_nat["peer"] == "192.168.1.254"
     assert without_nat is None, "device answered without MASQUERADE – gateway not as wrong as intended?"
-    assert restored and restored["setup"] == 12
+    assert in_setup(restored, 12), restored
 
     write_protocol("E04", "Access despite wrong device gateway", True,
                    {"with_nat": with_nat, "without_nat": without_nat},

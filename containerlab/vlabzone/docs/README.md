@@ -3,7 +3,8 @@
 What each node of the labs is configured to do, and **why**.
 
 There are two labs. Both are generated from the same source ([`config/setups.yaml`](../config/setups.yaml),
-[`topology/gen.py`](../topology/gen.py)) and differ only in how the lab edge separates the setups:
+[`topology/gen.py`](../topology/gen.py)) and differ only in how the lab edge separates the setups. Both model the real switching: an aggregation switch
+with the edge, and system switches whose devices are grouped dynamically into setups.
 
 | Lab | Edge mode | Containers | Start | Document |
 |---|---|---|---|---|
@@ -16,7 +17,7 @@ Both labs can run at the same time (`make up-all`).
 |---|---|
 | [lab-vrf.md](lab-vrf.md) | VRF lab: overview, addresses, one request hop by hop, the VRF edge, switch, what carries over |
 | [lab-pbr.md](lab-pbr.md) | PBR lab: overview, addresses, one request hop by hop, the PBR edge, setup gateways, switch, what carries over |
-| [common.md](common.md) | nodes that are identical in both labs: corporate firewall, workspaces, devices, broker, switch basics, management, settings for all nodes |
+| [common.md](common.md) | nodes that are identical in both labs: corporate firewall, workspaces, broker, switches (aggregation + system switches, inventory and grouping), devices, management, settings for all nodes |
 | [vrf-vs-pbr.md](vrf-vs-pbr.md) | comparison of the two modes: test results (E10), advantages, recommendation |
 
 Concept and experiments: [`idea.md`](../../../idea.md) (German). Roadmap: [`PLAN.md`](../../../PLAN.md).

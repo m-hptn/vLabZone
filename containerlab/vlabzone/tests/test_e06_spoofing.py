@@ -6,7 +6,7 @@ are dropped.
 """
 import pytest
 
-from tests.conftest import ALICE, BOB, ident
+from tests.conftest import ALICE, BOB, ident, in_setup
 from tests.lib.results import write_protocol
 from tests.lib.wg import tunnel_ip
 
@@ -23,7 +23,7 @@ def test_e06_spoofed_tunnel_ip(lab, tunnel):
 
     write_protocol("E06a", "Spoofed tunnel IP", spoofed is None and legit is not None,
                    {"spoofed_answer": spoofed, "bob_answer": legit})
-    assert legit and legit["setup"] == 12, "Bob's own access must keep working"
+    assert in_setup(legit, 12), "Bob's own access must keep working"
     assert spoofed is None, "edge accepted a packet with a foreign tunnel IP"
 
 

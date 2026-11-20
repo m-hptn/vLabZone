@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.lib import wg
+from tests.lib import labcfg, wg
 from tests.lib.node import Node
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,8 +43,9 @@ def edge_mode() -> str:
 
 
 @pytest.fixture(scope="session")
-def setups() -> dict:
-    return yaml.safe_load((ROOT / "config" / "setups.yaml").read_text())
+def cfg() -> dict:
+    """config/setups.yaml (inventory + initial grouping)"""
+    return labcfg.CFG
 
 
 @pytest.fixture(scope="session")
@@ -93,6 +94,24 @@ def nat(lab):
         else:
             lab[f"gw-{setup}"].run(f"gw-ctl nat {state}")
     return _set
+
+
+@pytest.fixture
+def flush_arp(lab):
+    """flush_arp(setup) – forget the neighbour cache of a setup's gateway (edge VRF or gw-N),
+    so the next access ARPs again. Needed after moving devices between setups."""
+    def _flush(setup: int) -> None:
+        vlan = next(s["vlan"] for s in labcfg.CFG["setups"] if s["id"] == setup)
+        if EDGE_MODE == "vrf":
+            lab["lab-edge"].run(f"ip neigh flush dev eth2.{vlan}")
+        else:
+            lab[f"gw-{setup}"].run(f"ip neigh flush dev eth1.{vlan}")
+    return _flush
+
+
+def in_setup(answer: dict | None, setup: int, ip: str = "192.168.1.20") -> bool:
+    """True if <answer> came from the device that owns <ip> in <setup> (initial grouping)."""
+    return bool(answer) and answer["device"] == labcfg.device_at(setup, ip)
 
 
 def ident(result) -> dict | None:

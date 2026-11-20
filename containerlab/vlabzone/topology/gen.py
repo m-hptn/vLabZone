@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Generate the containerlab topologies from config/setups.yaml.
 
-    topology/gen.py            write topology/vlabzone-vrf.clab.yml and vlabzone-pbr.clab.yml
-    topology/gen.py --check    exit 1 if a committed file differs from what would be generated
+    topology/gen.py            write topology/vlabzone-{vrf,pbr}.clab.yml and their viewer layouts
+                               (vlabzone-*.clab.yml.annotations.json, containerlab VS Code extension)
+    topology/gen.py --check    exit 1 if a committed topology differs from what would be generated
+
+The layout is always written in full: every node gets a position, an icon and a group
+(corporate, lab core, one group per system switch). Positions moved in the viewer are
+overwritten by the next `make topology` / `make up`. Only the viewer settings (style
+preferences) of an existing layout file are kept. The layout files are not committed.
 
 Both labs share everything except the edge mode and, in PBR mode, the setup
 gateways gw-N. Generating them from one source keeps them from drifting apart,
@@ -11,6 +17,7 @@ and a new setup in setups.yaml shows up in both labs.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -110,6 +117,92 @@ def build(mode: str, cfg: dict) -> dict:
     }
 
 
+# --- viewer layout (containerlab VS Code extension, tested with 0.27) --------------------
+# Positions are the top-left corner of a node; the viewer sizes each group around its members.
+COL = {"corp": 0, "fw": 220, "edge": 460, "agg": 700, "sys": 1080, "dev": 1300}
+ROW = 140                       # vertical distance between nodes in a column
+SYS_GAP = 100                   # extra space between two system switch blocks
+
+GROUP_STYLE = {
+    "corporate": ("Corporate (simulated)", "#3b82f6"),
+    "lab-core": ("Lab zone: edge, aggregation, management", "#f59e0b"),
+}
+SYS_COLOR = "#10b981"
+
+
+def layout(mode: str, cfg: dict, viewer_settings: dict | None) -> dict:
+    nodes: list[dict] = []
+
+    def place(node_id: str, x: int, y: int, icon: str, group: str) -> None:
+        nodes.append({"id": node_id, "position": {"x": x, "y": y}, "icon": icon, "groupId": group})
+
+    # system switch blocks on the right decide the overall height
+    groups = []
+    y = 0
+    sys_rows = []
+    for sw in cfg["switches"]:
+        n = len(sw["devices"])
+        top = y
+        for i, d in enumerate(sw["devices"]):
+            place(d["name"], COL["dev"], top + i * ROW, "client", f"sys-{sw['name']}")
+        place(f"lab-{sw['name']}", COL["sys"], top + (n - 1) * ROW // 2, "switch", f"sys-{sw['name']}")
+        sys_rows.append(top + (n - 1) * ROW // 2)
+        setups = [f"setup {s['id']}: " + ", ".join(d.split("-")[-1] for d in s["devices"])
+                  for s in cfg["setups"] if s["switch"] == sw["name"]]
+        groups.append((f"sys-{sw['name']}", f"System switch {sw['name']} – " + (" · ".join(setups) or "no setup"), SYS_COLOR))
+        y = top + n * ROW + SYS_GAP
+    mid = (sys_rows[0] + sys_rows[-1]) // 2
+
+    # corporate side on the left
+    for i, ws in enumerate(["ws-std", "ws-power", "ws-ci"]):
+        place(ws, COL["corp"], mid - ROW * 3 // 2 + i * ROW, "vm", "corporate")
+    place("corp-svc", COL["corp"], mid + ROW * 3 // 2 + 20, "server", "corporate")
+    place("corp-fw", COL["fw"], mid, "firewall", "corporate")
+
+    # lab core in the middle: edge, broker, aggregation, management, (PBR) gateways
+    agg = cfg["aggregation"]["name"]
+    place("lab-edge", COL["edge"], mid, "router", "lab-core")
+    place("broker", COL["edge"], mid + ROW * 2, "controller", "lab-core")
+    place(f"lab-{agg}", COL["agg"], mid, "switch", "lab-core")
+    place("lab-mgmt", COL["agg"], mid + ROW * 2, "switch", "lab-core")
+    if mode == "pbr":
+        for i, s in enumerate(cfg["setups"]):
+            place(f"gw-{s['id']}", COL["agg"] - 120 + i * 120, mid - ROW * 2 + 20, "router", "lab-core")
+    groups = [(gid, *GROUP_STYLE[gid]) for gid in ("corporate", "lab-core")] + groups
+
+    return {
+        "freeTextAnnotations": [],
+        "freeShapeAnnotations": [],
+        "trafficRateAnnotations": [],
+        "scriptButtonAnnotations": [],
+        "groupStyleAnnotations": [
+            {"id": gid, "name": name, "level": "1", "backgroundColor": color, "backgroundOpacity": 10,
+             "borderColor": color, "borderWidth": 2, "borderStyle": "dashed", "borderRadius": 8,
+             "labelColor": color, "labelPosition": "top-left"}
+            for gid, name, color in groups
+        ],
+        "networkNodeAnnotations": [],
+        "nodeAnnotations": nodes,
+        "edgeAnnotations": [],
+        "aliasEndpointAnnotations": [],
+        "viewerSettings": viewer_settings or {"nodeStyle": "boxed"},
+    }
+
+
+def write_layout(mode: str, cfg: dict) -> None:
+    path = ROOT / "topology" / f"vlabzone-{mode}.clab.yml.annotations.json"
+    settings = None
+    if path.exists():
+        try:
+            settings = json.loads(path.read_text()).get("viewerSettings")
+        except (ValueError, AttributeError):
+            settings = None
+    text = json.dumps(layout(mode, cfg, settings), indent=2) + "\n"
+    if not path.exists() or path.read_text() != text:
+        path.write_text(text)
+        print(f"wrote {path.relative_to(ROOT)}")
+
+
 def render(mode: str, cfg: dict) -> str:
     header = (
         f"# GENERATED by topology/gen.py from config/setups.yaml – do not edit, run `make topology`.\n"
@@ -133,9 +226,11 @@ def main() -> int:
         if args.check:
             if not path.exists() or path.read_text() != text:
                 stale.append(path.name)
-        elif not path.exists() or path.read_text() != text:
-            path.write_text(text)
-            print(f"wrote {path.relative_to(ROOT)}")
+        else:
+            if not path.exists() or path.read_text() != text:
+                path.write_text(text)
+                print(f"wrote {path.relative_to(ROOT)}")
+            write_layout(mode, cfg)
     if stale:
         print(f"out of date: {', '.join(stale)} – run `make topology`", file=sys.stderr)
         return 1

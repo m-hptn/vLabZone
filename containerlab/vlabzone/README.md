@@ -153,7 +153,7 @@ make up | down | reset | inspect     lab of EDGE_MODE (default vrf), e.g. make u
 make up-all | down-all | test-all    both labs (they can run side by side)
 make test            pytest suite against the lab of EDGE_MODE
 make test-stage1     only the experiments of one stage
-make topology        regenerate topology/vlabzone-*.clab.yml after editing config/setups.yaml
+make topology        regenerate topology/vlabzone-*.clab.yml (and their viewer layouts) after editing config/setups.yaml
 make pcap NODE=corp-fw IF=eth10 SECONDS=30   capture into results/
 make clean           remove venv and local results
 ```

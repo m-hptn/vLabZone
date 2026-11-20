@@ -13,6 +13,13 @@ with the edge, and system switches whose devices are grouped dynamically into se
 
 Both labs can run at the same time (`make up-all`).
 
+**Viewing a lab:** open `topology/vlabzone-vrf.clab.yml` or `vlabzone-pbr.clab.yml` with the containerlab
+VS Code extension. `topology/gen.py` writes a full layout for it next to each topology
+(`*.clab.yml.annotations.json`): corporate side on the left, edge, aggregation switch and management in the
+middle, one group per system switch (with its current setups) on the right, icons per node type.
+`make topology` and `make up` always rewrite it, so nodes moved by hand are put back; the viewer's style
+settings are kept. The layout files are local and not committed.
+
 | Document | Content |
 |---|---|
 | [lab-vrf.md](lab-vrf.md) | VRF lab: overview, addresses, one request hop by hop, the VRF edge, switch, what carries over |

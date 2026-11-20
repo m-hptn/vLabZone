@@ -153,7 +153,7 @@ make up | down | reset | inspect     lab of EDGE_MODE (default vrf), e.g. make u
 make up-all | down-all | test-all    both labs (they can run side by side)
 make test            pytest suite against the lab of EDGE_MODE
 make test-stage1     only the experiments of one stage
-make topology        regenerate topology/vlabzone-*.clab.yml (and their viewer layouts) after editing config/setups.yaml
+make topology        regenerate topologies, view files (topology/views/) and viewer layouts after editing config/setups.yaml
 make pcap NODE=corp-fw IF=eth10 SECONDS=30   capture into results/
 make clean           remove venv and local results
 ```
@@ -216,7 +216,7 @@ containerlab/vlabzone/
 ├── Makefile, VERSION, .env.example, requirements.txt, pytest.ini
 ├── deploy/ansible/        site.yml, inventories, group_vars, roles/{preflight,host_prereqs,vlabzone,routeros_image,lab_deploy}
 ├── scripts/               preflight.sh, smoke.sh, wait-ready.sh
-├── topology/              gen.py → vlabzone-vrf.clab.yml, vlabzone-pbr.clab.yml (generated); smoke.clab.yml
+├── topology/              gen.py → vlabzone-vrf.clab.yml, vlabzone-pbr.clab.yml, views/ (deployment, logical); smoke.clab.yml
 ├── images/                base + role images (router, edge, workspace, device, serial, mgmt, broker), routeros/build.sh
 ├── config/                setups.yaml (setups, VLANs, devices), corp-fw.nft, users.yaml
 ├── docs/                  per-lab documentation: lab-vrf.md, lab-pbr.md, common.md, vrf-vs-pbr.md

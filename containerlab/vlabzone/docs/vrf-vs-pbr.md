@@ -43,7 +43,7 @@ recover after **12–16 s**. In VRF this affects one setup, in PBR every user at
 | **Edge doesn't touch the setups** | gateways can be created together with a setup (e.g. Proxmox SDN gateway or a small container); adding a setup barely changes the edge | shown: edge trunk carries only VLAN 199 |
 | **Load spread out** | NAT and connection tracking run on the gateways, not all on the edge | not measured (E22) |
 | **Switching setups without reconnecting** | changing the rule moves a user; tunnel, key and port stay. VRF needs a new handshake on another port | possible, not tested |
-| **Platform support** | policy routing is supported almost everywhere; VRF together with WireGuard and firewall rules varies | RouterOS: stage 1b |
+| **Platform support** | policy routing is supported almost everywhere; VRF together with WireGuard and firewall rules varies | RouterOS 7.24.6 supports the VRF design (stage 1b) – not an argument for PBR here |
 
 ## 4. Advantages of VRF
 
@@ -70,5 +70,6 @@ That keeps one port and drops the gateways, but has PBR's failure mode (one wron
 foreign setup).
 
 Open points that decide it:
-- **Stage 1b (RouterOS trial):** can the MikroTik do VRF with WireGuard and VRF-aware firewall rules?
+- **Stage 1b (RouterOS trial): done** – the MikroTik (CHR 7.24.6) does VRF with WireGuard; firewall rules work
+  with `in-interface=vrf-sN` ([routeros-spike.md](routeros-spike.md)). The platform argument for PBR is gone.
 - **E21 (scale):** how both modes behave with 50 setups and 200 contexts.

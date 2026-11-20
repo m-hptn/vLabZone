@@ -6,7 +6,8 @@ on a single Linux host. Background and experiments: [`../../idea.md`](../../idea
 implementation roadmap: [`../../PLAN.md`](../../PLAN.md).
 
 > **Status:** two labs, `vlabzone-vrf` and `vlabzone-pbr`, one per edge mode, generated from
-> `config/setups.yaml`. Both pass E01–E06 and E09; E10 compares the modes. Next: RouterOS trial (stage 1b).
+> `config/setups.yaml`. Both pass E01–E06 and E09; E10 compares the modes. RouterOS trial (stage 1b) done:
+> [docs/routeros-spike.md](docs/routeros-spike.md).
 
 ---
 
@@ -155,6 +156,7 @@ make test            pytest suite against the lab of EDGE_MODE
 make test-stage1     only the experiments of one stage
 make topology        regenerate topologies, view files (topology/views/) and viewer layouts after editing config/setups.yaml
 make pcap NODE=corp-fw IF=eth10 SECONDS=30   capture into results/
+make spike-up | spike-down                   RouterOS trial lab (docs/routeros-spike.md)
 make clean           remove venv and local results
 ```
 

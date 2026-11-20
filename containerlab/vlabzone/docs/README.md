@@ -40,6 +40,7 @@ a different layout:
 | [lab-pbr.md](lab-pbr.md) | PBR lab: overview, addresses, one request hop by hop, the PBR edge, setup gateways, switch, what carries over |
 | [common.md](common.md) | nodes that are identical in both labs: corporate firewall, workspaces, broker, switches (aggregation + system switches, inventory and grouping), devices, management, settings for all nodes |
 | [vrf-vs-pbr.md](vrf-vs-pbr.md) | comparison of the two modes: test results (E10), advantages, recommendation |
+| [routeros-spike.md](routeros-spike.md) | stage 1b: MikroTik CHR as VRF edge – results, RouterOS configuration, firewall findings |
 
 Concept and experiments: [`idea.md`](../../../idea.md) (German). Roadmap: [`PLAN.md`](../../../PLAN.md).
 

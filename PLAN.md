@@ -155,11 +155,17 @@ vLabZone/containerlab/vlabzone/
    - `network-mode: none` works with containerlab 0.82 – no node has `eth0`, no nft fallback needed.
    - Devices see 192.168.1.254 as client (MASQUERADE) → per-user attribution must come from the broker audit.
 
-### Stage 1b – RouterOS trial (separate step after stage 1)
+### Stage 1b – RouterOS trial (separate step after stage 1)  ✅ done 2026-11-20 (CHR 7.24.6, 25/25 checks)
 10. Build the CHR image, boot it in a separate `topology/spike-routeros.clab.yml` (CHR + one workspace,
     switch and device), configure one VRF + WireGuard + VLAN + masquerade path for setup 12 by hand.
     Checks the riskiest assumptions (WireGuard in VRF on RouterOS, clab interface mapping, boot time)
     before stage 2 builds the RouterOS edge on them. Findings in `docs/routeros-spike.md`.
+
+    Findings: WireGuard inside a VRF works; overlapping setups, MASQUERADE, spoofing protection, revoke via
+    REST work. Firewall rules inside a VRF must name the VRF (`in-interface=vrf-sN` + addresses); rules on
+    member interfaces are flagged invalid, interface lists with VRFs silently never match. Stock RouterOS
+    exposes all management services on main-VRF addresses → input filter + service hardening needed.
+    New rules take ~3 s to become active. Boot ~45 s, ~175 MB RAM. To repeat with the real router's version.
 
 ### Stage 2 – Variants (E10, E11, E13, E14, E27 part 1)
 11. Edge PBR mode + `gw-12`, `gw-7`; run the stage-1 suite in both modes; deliberate misconfig tests (E10).

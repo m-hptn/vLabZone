@@ -140,7 +140,8 @@ the MikroTik, connected to the aggregation switch.
 > **Finding (VRF + nftables) [real]:** for traffic arriving on an interface that belongs to a VRF, the
 > `input` and `forward` hooks see the **VRF device** (`vrf-s12`) as `iifname`, not `wg-s12`. Rules must match
 > the real ingress interface with **`meta sdifname`**. With `iifname "wg-s12"` all tunnel traffic was silently
-> dropped. The real edge configuration must account for this (for RouterOS: checked in stage 1b).
+> dropped. RouterOS behaves similarly, only stricter: rules must name the VRF (`in-interface=vrf-s12`);
+> rules naming `wg-s12`/`vlan112` are flagged invalid ([routeros-spike.md](routeros-spike.md#3-finding-firewall-rules-inside-a-vrf-routeros-counterpart-of-meta-sdifname)).
 
 **`edge-ctl`**: the single interface for granting and revoking access. The test helpers use it now, the
 broker will call it over SSH from stage 3.
@@ -209,7 +210,8 @@ In addition to [common.md](common.md#4-carried-over-to-the-real-environment-both
 
 1. Per setup: VRF + VLAN interface + WireGuard interface (own port), MASQUERADE on the setup VLAN.
 2. Forward only "tunnel N → VLAN N"; no default route on the edge; `l3mdev_accept` off.
-3. Firewall rules inside VRFs must match the real ingress interface (`meta sdifname` on Linux; RouterOS: stage 1b).
+3. Firewall rules inside VRFs must match the real ingress interface: `meta sdifname` on Linux; on RouterOS
+   `in-interface=vrf-sN` plus addresses (member interfaces and interface lists with VRFs don't work).
 4. Corporate allowance: a port range (one port per setup).
 5. The MikroTik's trunk to the aggregation switch carries every setup VLAN; each aggregation → system switch
    trunk only the VLANs of the setups on that switch.

@@ -116,6 +116,13 @@ test: venv ## Run the test suite against the lab of EDGE_MODE
 test-stage%: venv ## Run the tests of one stage, e.g. make test-stage1
 	$(PY) -m pytest tests -m stage$* $(PYTEST_ARGS)
 
+.PHONY: spike-up spike-down
+SPIKE_TOPO := topology/spike-routeros.clab.yml
+spike-up: ## Stage 1b: deploy the RouterOS trial lab (CHR, needs /dev/kvm + make build-routeros)
+	$(CLAB) deploy -t $(SPIKE_TOPO) --reconfigure
+spike-down: ## Stage 1b: destroy the RouterOS trial lab
+	$(CLAB) destroy -t $(SPIKE_TOPO) --cleanup
+
 .PHONY: pcap
 pcap: ## Capture on a node: make pcap NODE=corp-fw IF=eth10 [SECONDS=30]
 	@test -n "$(NODE)" -a -n "$(IF)" || { echo "usage: make pcap NODE=<node> IF=<interface> [SECONDS=30]"; exit 1; }

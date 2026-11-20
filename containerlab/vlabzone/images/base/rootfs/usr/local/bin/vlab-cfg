@@ -6,7 +6,7 @@
                                        mgmt <port> <ip/prefix>
                                        trunk <port> <vlan> [<vlan> …]
                                        access <port> <vlan|none> <device>
-                                     depends on EDGE_MODE (vrf | pbr)
+                                     depends on EDGE_MODE (vrf | pbr | hybrid)
   vlab-cfg gw-ip <id>             -> transfer address of gw-<id> (PBR mode)
   vlab-cfg get edge.wg_port_base  -> scalar value
   vlab-cfg setup <id> <key>       -> value of one setup field
@@ -71,8 +71,8 @@ def switch_config(cfg: dict, name: str, mode: str) -> list[tuple]:
     if name == cfg["aggregation"]["name"]:
         agg = cfg["aggregation"]
         out.append(("mgmt", "eth2", agg["mgmt_ip"]))
-        # VRF: the edge is the gateway in every setup. PBR: the edge only talks to the gateways.
-        edge_vlans = [s["vlan"] for s in cfg["setups"]] if mode == "vrf" else [transfer]
+        # VRF/hybrid: the edge is the gateway in every setup. PBR: the edge only talks to the gateways.
+        edge_vlans = [transfer] if mode == "pbr" else [s["vlan"] for s in cfg["setups"]]
         out.append(("trunk", agg["edge_port"], edge_vlans))
         for sw in cfg["switches"]:
             # only the VLANs of the setups that live on that system switch

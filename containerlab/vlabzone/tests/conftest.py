@@ -10,7 +10,7 @@ from tests.lib import labcfg, wg
 from tests.lib.node import Node
 
 ROOT = Path(__file__).resolve().parents[1]
-# One lab per edge mode (topology/gen.py): vlabzone-vrf, vlabzone-pbr
+# One lab per edge mode (topology/gen.py): vlabzone-vrf, vlabzone-pbr, vlabzone-hybrid
 EDGE_MODE = os.environ.get("EDGE_MODE", "vrf")
 LAB = f"vlabzone-{EDGE_MODE}"
 TOPOLOGY = yaml.safe_load((ROOT / "topology" / f"{LAB}.clab.yml").read_text())
@@ -89,7 +89,7 @@ def nat(lab):
     on the edge in VRF mode, on the setup gateway gw-N in PBR mode."""
     def _set(setup: int, on: bool) -> None:
         state = "on" if on else "off"
-        if EDGE_MODE == "vrf":
+        if EDGE_MODE != "pbr":
             lab["lab-edge"].run(f"edge-ctl nat {state} --setup {setup}")
         else:
             lab[f"gw-{setup}"].run(f"gw-ctl nat {state}")
@@ -102,7 +102,7 @@ def flush_arp(lab):
     so the next access ARPs again. Needed after moving devices between setups."""
     def _flush(setup: int) -> None:
         vlan = next(s["vlan"] for s in labcfg.CFG["setups"] if s["id"] == setup)
-        if EDGE_MODE == "vrf":
+        if EDGE_MODE != "pbr":
             lab["lab-edge"].run(f"ip neigh flush dev eth2.{vlan}")
         else:
             lab[f"gw-{setup}"].run(f"ip neigh flush dev eth1.{vlan}")

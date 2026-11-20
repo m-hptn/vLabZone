@@ -5,9 +5,9 @@ A containerlab-based lab that reproduces the access path
 on a single Linux host. Background and experiments: [`../../idea.md`](../../idea.md) (German),
 implementation roadmap: [`../../PLAN.md`](../../PLAN.md).
 
-> **Status:** two labs, `vlabzone-vrf` and `vlabzone-pbr`, one per edge mode, generated from
-> `config/setups.yaml`. Both pass E01–E06 and E09; E10 compares the modes. RouterOS trial (stage 1b) done:
-> [docs/routeros-spike.md](docs/routeros-spike.md).
+> **Status:** three labs, `vlabzone-vrf`, `vlabzone-pbr` and `vlabzone-hybrid`, one per edge mode, generated from
+> `config/setups.yaml`. All pass E01–E06, E09 and E20; E10 compares the modes. RouterOS trial (stage 1b) done for
+> all three designs: [docs/routeros-spike.md](docs/routeros-spike.md).
 
 ---
 
@@ -109,7 +109,7 @@ Override them per host in the inventory or in `deploy/ansible/host_vars/<host>.y
 |---|---|---|
 | `vlab_profile` | `base` | `base` or `scale` – resource thresholds of the preflight |
 | `vlab_edge_impl` | `linux` | `linux` or `routeros` (MikroTik CHR) |
-| `vlab_edge_mode` | `vrf` | `vrf` or `pbr` |
+| `vlab_edge_mode` | `vrf` | `vrf`, `pbr` or `hybrid` |
 | `vlab_routeros_enabled` | `false` | build the RouterOS CHR image (needs `/dev/kvm`) |
 | `vlab_routeros_version` / `_sha256` | `7.24.6` | **set to the version of the real MikroTik**; sha256 of `chr-<v>.vmdk.zip` |
 | `vlab_manage_docker` | `true` | install Docker CE if missing (an existing install is never changed) |
@@ -150,13 +150,13 @@ make host-check      preflight after provisioning
 make build           (re)build the images
 make build-routeros  build the RouterOS CHR image
 make smoke           2-node smoke lab (VLAN, VRF, WireGuard)
-make up | down | reset | inspect     lab of EDGE_MODE (default vrf), e.g. make up EDGE_MODE=pbr
-make up-all | down-all | test-all    both labs (they can run side by side)
+make up | down | reset | inspect     lab of EDGE_MODE (vrf (default) | pbr | hybrid), e.g. make up EDGE_MODE=hybrid
+make up-all | down-all | test-all    all labs (they can run side by side)
 make test            pytest suite against the lab of EDGE_MODE
 make test-stage1     only the experiments of one stage
 make topology        regenerate topologies, view files (topology/views/) and viewer layouts after editing config/setups.yaml
 make pcap NODE=corp-fw IF=eth10 SECONDS=30   capture into results/
-make spike-up | spike-test | spike-down SPIKE=vrf|pbr   RouterOS trial labs (docs/routeros-spike.md)
+make spike-up | spike-test | spike-down SPIKE=vrf|pbr|hybrid   RouterOS trial labs (docs/routeros-spike.md)
 make clean           remove venv and local results
 ```
 
@@ -168,6 +168,7 @@ without sudo; everyone else gets `sudo containerlab`. Everything else only needs
 ```bash
 make up                                         # VRF lab, ~20 s, waits until all nodes are ready
 make up EDGE_MODE=pbr                           # PBR lab (can run at the same time)
+make up EDGE_MODE=hybrid                        # hybrid lab (one port, setups in edge VRFs)
 docker exec -it clab-vlabzone-vrf-ws-std bash   # a workspace
 docker exec clab-vlabzone-vrf-lab-edge edge-ctl status
 ```
@@ -176,7 +177,7 @@ A tunnel from `ws-std` to setup 12 (what `tests/lib/wg.py` does for the tests �
 broker and `lab-agent` take over):
 
 ```bash
-L=vrf                                               # or pbr – the commands are the same
+L=vrf                                               # or pbr / hybrid – the commands are the same
 E() { docker exec clab-vlabzone-$L-lab-edge "$@"; }  # works in bash and zsh
 W() { docker exec clab-vlabzone-$L-ws-std "$@"; }
 PUB=$(W sh -c 'umask 077; wg genkey > /run/vlab/k && wg pubkey < /run/vlab/k')
@@ -194,15 +195,15 @@ E edge-ctl peer del --setup 12 --pubkey "$PUB"; W ip link del wg-s12
 
 ### Lab at a glance
 
-Every node's configuration and why it is needed, per lab: [`docs/`](docs/README.md) – [VRF lab](docs/lab-vrf.md), [PBR lab](docs/lab-pbr.md), [common nodes](docs/common.md), [VRF vs. PBR](docs/vrf-vs-pbr.md).
+Every node's configuration and why it is needed, per lab: [`docs/`](docs/README.md) – [VRF lab](docs/lab-vrf.md), [PBR lab](docs/lab-pbr.md), [hybrid lab](docs/lab-hybrid.md), [common nodes](docs/common.md), [VRF vs. PBR vs. hybrid](docs/vrf-vs-pbr.md).
 
 
 | Node | Addresses | Purpose |
 |---|---|---|
 | `ws-std`, `ws-power`, `ws-ci` | 10.20.10.11–13 | workspaces (corporate) |
 | `corp-svc` | 10.20.20.10 | corporate service |
-| `corp-fw` | 10.20.10.1, .20.1, .99.1, .98.1 | corporate firewall, only UDP 51800–52099 / TCP 443, 8443 to the lab |
-| `lab-edge` | 10.20.99.2, 10.198.0.2, 192.168.1.254 per setup | WireGuard + VRF per setup, `edge-ctl` |
+| `corp-fw` | 10.20.10.1, .20.1, .99.1, .98.1 | corporate firewall, only WireGuard UDP (VRF: 51800–52099, PBR/hybrid: 51820) / TCP 443, 8443 to the lab |
+| `lab-edge` | 10.20.99.2, 10.198.0.2, 192.168.1.254 per setup (VRF, hybrid) | VRF: WireGuard + VRF per setup; PBR: `wg0` + rules to gateways; hybrid: `wg0` + rules into setup VRFs. `edge-ctl` |
 | `broker` | 10.20.98.2, 10.198.0.1 | health endpoint on 8443 (API: stage 3) |
 | `lab-agg` | 10.198.0.3 | aggregation switch: edge, system switches, (PBR) gateways |
 | `lab-sys1`, `lab-sys2` | 10.198.0.4 / .5 | system switches, `sw-port <port> <vlan\|none>` regroups devices |
@@ -217,11 +218,11 @@ Every node's configuration and why it is needed, per lab: [`docs/`](docs/README.
 containerlab/vlabzone/
 ├── Makefile, VERSION, .env.example, requirements.txt, pytest.ini
 ├── deploy/ansible/        site.yml, inventories, group_vars, roles/{preflight,host_prereqs,vlabzone,routeros_image,lab_deploy}
-├── scripts/               preflight.sh, smoke.sh, wait-ready.sh
-├── topology/              gen.py → vlabzone-vrf.clab.yml, vlabzone-pbr.clab.yml, views/ (deployment, logical); smoke.clab.yml
+├── scripts/               preflight.sh, smoke.sh, wait-ready.sh, spike-routeros.py
+├── topology/              gen.py → vlabzone-{vrf,pbr,hybrid}.clab.yml, views/ (deployment, logical); smoke.clab.yml
 ├── images/                base + role images (router, edge, workspace, device, serial, mgmt, broker), routeros/build.sh
 ├── config/                setups.yaml (setups, VLANs, devices), corp-fw.nft, users.yaml
-├── docs/                  per-lab documentation: lab-vrf.md, lab-pbr.md, common.md, vrf-vs-pbr.md
+├── docs/                  per-lab documentation: lab-vrf.md, lab-pbr.md, lab-hybrid.md, common.md, vrf-vs-pbr.md
 ├── tests/                 pytest suite, one module per experiment
 └── results/               experiment protocols and pcaps (not committed)
 ```

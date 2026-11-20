@@ -206,7 +206,7 @@ configuration, which is created once and can be checked. Details and comparison:
 
 ## Carried over to the real environment
 
-In addition to [common.md](common.md#4-carried-over-to-the-real-environment-both-modes):
+In addition to [common.md](common.md#4-carried-over-to-the-real-environment-all-modes):
 
 1. Per setup: VRF + VLAN interface + WireGuard interface (own port), MASQUERADE on the setup VLAN.
 2. Forward only "tunnel N → VLAN N"; no default route on the edge; `l3mdev_accept` off.

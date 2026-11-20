@@ -1,6 +1,6 @@
-#!/usr/sbin/nft -f
 # Simulated corporate firewall: the ONE-TIME allowance for the hardware pool.
-#   workspaces -> lab edge : UDP 51800-52099 (WireGuard)
+#   workspaces -> lab edge : UDP $WG_PORTS (WireGuard) – defined by corp-fw.sh per edge mode:
+#                            vrf: 51800-52099 (one port per setup), pbr/hybrid: 51820
 #   workspaces -> broker   : TCP 443, 8443 (HTTPS API)
 # Nothing from the lab may open connections towards the corporate network.
 flush ruleset
@@ -22,7 +22,7 @@ table inet corp {
     iifname $CORP_SVC oifname $WS_NET accept
 
     # the one-time allowance towards the lab
-    iifname $WS_NET oifname $TO_EDGE udp dport 51800-52099 accept
+    iifname $WS_NET oifname $TO_EDGE udp dport $WG_PORTS accept
     iifname $WS_NET oifname $TO_BRK  tcp dport { 443, 8443 } accept
 
     counter comment "dropped by corporate firewall"

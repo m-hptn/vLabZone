@@ -276,7 +276,7 @@ the bookings and repair or remove deviations. Details and comparison: [vrf-vs-pb
 
 ## Carried over to the real environment
 
-In addition to [common.md](common.md#4-carried-over-to-the-real-environment-both-modes):
+In addition to [common.md](common.md#4-carried-over-to-the-real-environment-all-modes):
 
 1. One WireGuard interface and port (51820); corporate allowance: that single UDP port.
 2. Per setup: a routing table with only `default via <gateway>`, and a gateway with `.254`, MASQUERADE, no default route.

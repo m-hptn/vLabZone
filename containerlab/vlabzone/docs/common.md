@@ -1,10 +1,10 @@
-# Nodes common to both labs
+# Nodes common to all labs
 
 These nodes are configured the same way in `vlabzone-vrf` and `vlabzone-pbr`. Where a node behaves
 differently depending on the lab, this is pointed out and the lab document has the details.
 Tags **[real]** / **[sim]**: see [README.md](README.md#conventions).
 
-The commands below work in both labs. Set the lab first:
+The commands below work in every lab. Set the lab first:
 
 ```bash
 L=vrf      # or: L=pbr
@@ -44,7 +44,7 @@ and it enforces the one-time allowance that the concept asks the corporate netwo
 | `ct state established,related accept` | replies to allowed connections. Nothing in the lab can open a connection towards corporate |
 | `ct state invalid drop` | packets that belong to no known flow |
 | `br-ws → eth4 accept` and back | normal corporate traffic (workspace ↔ corporate service) |
-| `br-ws → eth10 udp dport 51800-52099 accept` | **allowance 1: WireGuard.** VRF lab: one port per setup (51800 + setup), so the range covers 300 setups. PBR lab: only 51820 is used |
+| `br-ws → eth10 udp dport $WG_PORTS accept` | **allowance 1: WireGuard.** `corp-fw.sh` defines `WG_PORTS` from the node's `EDGE_MODE`: VRF lab 51800-52099 (one port per setup, 300 setups), PBR and hybrid lab **only 51820** (E01 checks it) |
 | `br-ws → eth11 tcp dport {443, 8443} accept` | **allowance 2: broker API** |
 | `counter` before the drop policy | shows how much was blocked: `nft list chain inet corp forward` |
 
@@ -75,14 +75,14 @@ make pcap EDGE_MODE=$L NODE=corp-fw IF=eth10 SECONDS=20
 | `sshpass` installed **[sim]** | non-interactive SSH logins to the devices in tests |
 
 **Tunnel setup:** done by `tests/lib/wg.py` for now, by the `lab-agent` from stage 3. It does the same steps
-the agent will, and they are **identical in both labs**. The workspace asks the edge for the key and port
+the agent will, and they are **identical in all labs**. The workspace asks the edge for the key and port
 (`edge-ctl pubkey` / `port`), so it doesn't need to know the edge mode.
 
 | Step | Why |
 |---|---|
 | Generate the key **inside** the workspace; only the public key leaves | the private key never crosses the network (concept: keys local to the agent) |
 | Register it with `edge-ctl peer add` (later: `POST /api/contexts` at the broker) | access only through the broker |
-| Interface `wg-s<setup>`, endpoint `10.20.99.2:<port from edge-ctl>` | VRF lab: 51800 + setup. PBR lab: 51820 for every setup |
+| Interface `wg-s<setup>`, endpoint `10.20.99.2:<port from edge-ctl>` | VRF lab: 51800 + setup. PBR and hybrid lab: 51820 for every setup |
 | `allowed-ips 0.0.0.0/0` on the workspace side | the routes decide what enters the tunnel; the edge enforces what is allowed |
 | `persistent-keepalive 25` | keeps the corporate firewall's UDP state alive so the lab can still reply after idle periods (E16) |
 | Address `10.250.<user>.<setup>/32`, route `192.168.1.0/24 dev wg-s12 src 10.250.1.12` | desktop mode: the setup network is reached at its original addresses |
@@ -186,7 +186,7 @@ docker exec clab-vlabzone-$L-lab-sys1 sw-port eth12 107     # move sys1-dev2 int
 
 **Role:** Stand in for real hardware on the system switches. A device is named after where it sits
 (`sys1-dev1`), **not** after a setup: which setup it is in depends only on the VLAN of its switch port, and
-that can change. The devices are identical in both labs and cannot tell which edge mode is in use: in both
+that can change. The devices are identical in all labs and cannot tell which edge mode is in use: in all
 they see `192.168.1.254` as the client.
 
 | Device | IP | Initial setup |
@@ -230,20 +230,20 @@ lab-sys2 (.5).
 
 | Setting | Where | Why |
 |---|---|---|
-| Topologies generated from `setups.yaml` **[sim]** | `topology/gen.py` | both labs stay identical except for the edge mode; `make topology` regenerates them, and a test fails if a committed file is out of date |
+| Topologies generated from `setups.yaml` **[sim]** | `topology/gen.py` | the labs stay identical except for the edge mode; `make topology` regenerates them, and a test fails if a committed file is out of date |
 | `network-mode: none` **[sim]** | topology defaults | containerlab would otherwise connect every node to a Docker management network, a hidden path past corp-fw. Every node only has its lab links (E05 checks there's no `eth0`) |
 | Management network `vlab-mgmt`, subnet `VLAB_MGMT_SUBNET` **[sim]** | topology `mgmt:` | containerlab always creates one, even though no node uses it. Its subnet must not collide with other Docker networks on the host. Both labs share it |
 | `config/` mounted read-only at `/etc/vlab` **[sim]** | topology defaults | all nodes read `setups.yaml` and `corp-fw.nft` from one place; `vlab-cfg` queries it from shell scripts |
-| `EDGE_MODE` env on edge, switch and broker **[sim]** | topology | the same images serve both labs; the env selects the behaviour |
+| `EDGE_MODE` env on edge, switch and broker **[sim]** | topology | the same images serve all labs; the env selects the behaviour (corp-fw: the WireGuard allowance) |
 | Wait for interfaces (`wait_if`) **[sim]** | `common.sh` | containerlab creates the links after the containers have started |
 | Readiness file `/run/vlab-ready` **[sim]** | `common.sh`, `scripts/wait-ready.sh` | `make up` returns only when every node is configured |
 | Privileged containers **[sim]** | containerlab default for `kind: linux` | needed for VRFs, WireGuard, bridges, sysctls. This is why the lab belongs on a dedicated host |
 
 ---
 
-## 4. Carried over to the real environment (both modes)
+## 4. Carried over to the real environment (all modes)
 
-1. Corporate allowance: WireGuard UDP to the edge (VRF: 51800–52099, PBR: 51820), TCP 443/8443 to the broker.
+1. Corporate allowance: WireGuard UDP to the edge (VRF: 51800–52099, PBR and hybrid: 51820), TCP 443/8443 to the broker.
    Nothing else, and no routes to lab-internal networks.
 2. Switches: VLAN filtering, no default VLAN on ports, at most one untagged VLAN per access port (none for
    ungrouped devices), every trunk with only the VLANs needed behind it, management outside the setups.

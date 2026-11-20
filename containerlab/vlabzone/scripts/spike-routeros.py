@@ -7,6 +7,7 @@ risky assumptions one by one. Prints every step and writes results/spike-routero
 
   scripts/spike-routeros.py [--mode vrf]   VRF design   (make spike-up,          lab vlab-ros)
   scripts/spike-routeros.py --mode pbr     PBR design   (make spike-up SPIKE=pbr, lab vlab-ros-pbr)
+  scripts/spike-routeros.py --mode hybrid  hybrid design (make spike-up SPIKE=hybrid, lab vlab-ros-hybrid)
   scripts/spike-routeros.py --show         only print the CHR's relevant configuration
 """
 from __future__ import annotations
@@ -24,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tests.lib.node import Node  # noqa: E402
 
-LAB = "vlab-ros"                   # set by --mode: vlab-ros (vrf) / vlab-ros-pbr (pbr)
+LAB = "vlab-ros"                   # set by --mode: vlab-ros (vrf) / vlab-ros-<mode>
 AUTH = ("admin", "admin")          # vrnetlab default credentials
 RESULTS: dict = {"checks": {}}
 
@@ -147,9 +148,11 @@ def firewall(ros: ROS) -> None:
 class Tunnel:
     def __init__(self, ros: ROS, ws: Node, setup: int, tun_ip: str, netns: str | None = None,
                  register: bool = True, src_ip: str | None = None, ifname: str | None = None,
-                 pbr: bool = False, action: str = "lookup-only-in-table"):
+                 pbr: bool = False, action: str = "lookup-only-in-table", table: str | None = None,
+                 rule: bool = True):
         """VRF: peer on wg-s<setup>, port 51800+setup. PBR: peer on wg0 (51820) + routing rule
-        src-address=<tun_ip> interface=wg0 -> table s<setup>: two changes per booking."""
+        src-address=<tun_ip> interface=wg0 -> table s<setup>: two changes per booking.
+        Hybrid: table=vrf-s<setup>; rule=False when static per-setup rules exist (peer only)."""
         self.ros, self.ws, self.setup, self.netns = ros, ws, setup, netns
         self.ifname = ifname or f"wg-s{setup}"
         edge_if = "wg0" if pbr else f"wg-s{setup}"
@@ -162,9 +165,9 @@ class Tunnel:
         if register:
             self.peer = ros.put("interface/wireguard/peers", interface=edge_if, **{"public-key": self.pubkey,
                                 "allowed-address": f"{tun_ip}/32"}, comment=f"spike {tun_ip}")
-            if pbr:
+            if pbr and rule:
                 self.rule = ros.put("routing/rule", **{"src-address": f"{tun_ip}/32"}, interface="wg0",
-                                    table=f"s{setup}", action=action, comment=f"spike {tun_ip}")
+                                    table=table or f"s{setup}", action=action, comment=f"spike {tun_ip}")
         edge_pub = [w for w in ros.get("interface/wireguard") if w["name"] == edge_if][0]["public-key"]
         ws.run(f"ip link add {self.ifname} type wireguard && wg set {self.ifname} private-key {key} "
                f"peer {edge_pub} endpoint 10.20.10.1:{port} allowed-ips 0.0.0.0/0 persistent-keepalive 25")
@@ -242,6 +245,10 @@ def wait_until(cond, timeout: float = 30) -> float:
 def pbr_trial(ros: ROS) -> None:
     step("Configure PBR mode via REST: wg0 (51820), VLAN 199, routing tables s12 / s7")
     configure_pbr(ros)
+    # a new route becomes active asynchronously (gateway resolution on a freshly booted CHR)
+    active = lambda: {r["routing-table"]: r.get("active") for r in ros.get("ip/route")
+                      if r.get("routing-table") in ("s12", "s7")} == {"s12": "true", "s7": "true"}
+    RESULTS["routes_active_after_s"] = wait_until(active, 20)
     tables = {t["name"]: t.get("fib") for t in ros.get("routing/table")}
     routes = {r["routing-table"]: (r["gateway"], r.get("active")) for r in ros.get("ip/route")
               if r.get("routing-table") in ("s12", "s7")}
@@ -400,6 +407,258 @@ def pbr_trial(ros: ROS) -> None:
 
 
 
+# --- hybrid design: one wg0 (main), setups in VRFs, routing rules into the VRF tables ---------------------
+# Findings (RouterOS 7.24.6), traffic from wg0 (main) into a setup VRF:
+#   filter forward: out-interface=vrf-sN is valid but never matches, out-interface=vlanN is invalid
+#   mangle forward: out-interface=vlanN is valid AND matches -> mark the packet per setup there
+#   src-address with a non-contiguous mask (10.250.0.12/255.255.0.255) becomes a RANGE: no last-octet match
+# So the safeguard needs tunnel addresses grouped by setup (10.250.<setup>.<user>, prefixes=True).
+HYBRID_MANGLE = [("forward", {"out-interface": f"vlan{vlan}", "action": "mark-packet",
+                              "new-packet-mark": f"to-s{sid}", "passthrough": "yes",
+                              "comment": f"vlab: into setup {sid}"}) for sid, vlan in SETUPS]
+
+
+def hybrid_firewall(prefixes: bool) -> list:
+    """forward: tunnel -> setup N only for packets marked to-sN (mangle). With prefixes=True the
+    rule also requires the source prefix 10.250.N.0/24 – the safeguard against a wrong rule."""
+    rules = [
+        ("input", {"connection-state": "established,related", "action": "accept"}),
+        ("input", {"connection-state": "invalid", "action": "drop"}),
+        ("input", {"in-interface": "ether1", "action": "accept", "comment": "vlab: management (lab: REST/SSH)"}),
+        ("input", {"in-interface": "ether2", "protocol": "udp", "dst-port": "51820", "action": "accept",
+                   "comment": "vlab: WireGuard from corporate"}),
+        ("input", {"in-interface": "wg0", "dst-address": "10.250.0.1", "protocol": "icmp", "action": "accept",
+                   "comment": "vlab: ping tunnel gateway"}),
+        ("input", {"action": "drop", "comment": "vlab: input everything else"}),
+        ("forward", {"connection-state": "established,related", "action": "accept"}),
+        ("forward", {"connection-state": "invalid", "action": "drop"}),
+    ]
+    for sid, _ in SETUPS:
+        match = {"in-interface": "wg0", "packet-mark": f"to-s{sid}"}
+        if prefixes:
+            match["src-address"] = f"10.250.{sid}.0/24"
+        rules.append(("forward", {**match, "action": "accept", "comment": f"vlab: setup {sid}"}))
+    rules.append(("forward", {"action": "drop", "comment": "vlab: forward everything else"}))
+    return rules
+
+
+def hybrid_apply_firewall(ros: ROS, prefixes: bool) -> None:
+    for path in ("ip/firewall/filter", "ip/firewall/mangle"):
+        for rule in ros.get(path):
+            ros.delete(path, rule[".id"])
+    for chain, rule in HYBRID_MANGLE:
+        ros.put("ip/firewall/mangle", chain=chain, **rule)
+    for chain, rule in hybrid_firewall(prefixes):
+        ros.put("ip/firewall/filter", chain=chain, **rule)
+
+
+def configure_hybrid(ros: ROS) -> None:
+    """Like edge-hybrid.sh: wg0 in main, per setup a VRF with only the VLAN interface, MASQUERADE,
+    and a route back to the tunnels in the VRF table (10.250.0.0/16 via wg0@main)."""
+    ros.ensure("ip/address", "address", address="10.20.10.1/24", interface="ether2")
+    ros.ensure("interface/wireguard", "name", name="wg0", **{"listen-port": "51820"})
+    ros.ensure("ip/address", "address", address="10.250.0.1/16", interface="wg0")
+    for sid, vlan in SETUPS:
+        ros.ensure("interface/vlan", "name", name=f"vlan{vlan}", **{"vlan-id": str(vlan)}, interface="ether3")
+        ros.ensure("ip/vrf", "name", name=f"vrf-s{sid}", interfaces=f"vlan{vlan}")
+        if ("192.168.1.254/24", f"vlan{vlan}") not in [(a["address"], a["interface"]) for a in ros.get("ip/address")]:
+            ros.put("ip/address", address="192.168.1.254/24", interface=f"vlan{vlan}")
+        if not [n for n in ros.get("ip/firewall/nat") if n.get("out-interface") == f"vlan{vlan}"]:
+            ros.put("ip/firewall/nat", chain="srcnat", action="masquerade", **{"out-interface": f"vlan{vlan}"},
+                    comment=f"setup {sid}")
+        # the VRF's routing table appears asynchronously; REST rejects it as unknown until then
+        wait_until(lambda: f"vrf-s{sid}" in [t["name"] for t in ros.get("routing/table")], 15)
+        if not [r for r in ros.get("ip/route") if r.get("routing-table") == f"vrf-s{sid}"
+                and r.get("dst-address") == "10.250.0.0/16"]:
+            ros.put("ip/route", **{"dst-address": "10.250.0.0/16", "gateway": "wg0@main",
+                                   "routing-table": f"vrf-s{sid}"}, comment=f"setup {sid} -> tunnels")
+    for path in ("routing/rule", "ip/firewall/mangle"):       # leftovers from earlier runs
+        for rule in ros.get(path):
+            ros.delete(path, rule[".id"])
+
+
+def hybrid_trial(ros: ROS) -> None:
+    step("Configure hybrid mode via REST: wg0 (51820) in main, VRFs vrf-s12 / vrf-s7 with only the VLAN")
+    configure_hybrid(ros)
+    vrfs = {v["name"]: v["interfaces"] for v in ros.get("ip/vrf") if v["name"] != "main"}
+    back = {r["routing-table"]: r.get("active") for r in ros.get("ip/route") if r.get("dst-address") == "10.250.0.0/16"}
+    check("VRFs hold only the VLAN; route back to the tunnels (10.250.0.0/16 via wg0@main) active in each VRF",
+          vrfs == {"vrf-s12": "vlan112", "vrf-s7": "vlan107"} and back.get("vrf-s12") == "true"
+          and back.get("vrf-s7") == "true", {"vrfs": vrfs, "route_back": back})
+
+    ws, dev12 = Node(LAB, "ws"), Node(LAB, "dev12")
+    probe = lambda node, ip, port, ns=None: node.run(f"timeout 2 bash -c '</dev/tcp/{ip}/{port}'",
+                                                      netns=ns, check=False).returncode == 0
+    tunnels: list[Tunnel] = []
+
+    def hybrid_tunnel(setup: int, tun_ip: str, **kw) -> Tunnel:
+        t = Tunnel(ros, ws, setup, tun_ip, pbr=True, table=f"vrf-s{setup}", **kw)
+        tunnels.append(t)
+        return t
+
+    def set_table(t: Tunnel, table: str) -> None:
+        ros.delete("routing/rule", t.rule[".id"])
+        t.rule = ros.put("routing/rule", **{"src-address": f"{t.tun_ip}/32"}, interface="wg0", table=table,
+                         action="lookup-only-in-table", comment=f"spike {t.tun_ip}")
+
+    try:
+        step("Booking for setup 12: WireGuard peer on wg0 + routing rule into vrf-s12")
+        before = (len(ros.get("interface/wireguard/peers")), len(ros.get("routing/rule")))
+        t12 = hybrid_tunnel(12, "10.250.1.12")
+        after = (len(ros.get("interface/wireguard/peers")), len(ros.get("routing/rule")))
+        check("two changes per booking (peer + routing rule)", (after[0] - before[0], after[1] - before[1]) == (1, 1))
+        wait_until(lambda: t12.ident(timeout=1) is not None, 15)
+        a = t12.ident()
+        check("setup 12 reachable through the VRF, answer from dev12", a and a["device"] == "dev12", a)
+        check("MASQUERADE in the VRF: device sees 192.168.1.254", a and a["peer"] == "192.168.1.254", a)
+
+        step("Booking for setup 7 (same IP), same port, in a namespace")
+        t7 = hybrid_tunnel(7, "10.250.1.7", netns="setup7")
+        wait_until(lambda: t7.ident(timeout=1) is not None, 15)
+        b = t7.ident()
+        check("setup 7 reachable, answer from dev7 (one port for both setups)", b and b["device"] == "dev7", b)
+        check("setup 12 still answers from dev12", (t12.ident() or {}).get("device") == "dev12")
+
+        step("Spoofing: setup 12 with another context's source address")
+        spoof = hybrid_tunnel(12, "10.250.3.12", netns="spoof", src_ip="10.250.1.12", ifname="wg-spoof")
+        check("spoofed source dropped (cryptokey routing)", spoof.ident(timeout=3) is None)
+
+        step("Misconfiguration: routing rule missing")
+        ros.delete("routing/rule", t12.rule[".id"])
+        time.sleep(2)
+        missing = t12.ident(timeout=3)
+        t12.rule = ros.put("routing/rule", **{"src-address": "10.250.1.12/32"}, interface="wg0", table="vrf-s12",
+                           action="lookup-only-in-table")
+        wait_until(lambda: t12.ident(timeout=1) is not None, 15)
+        check("missing rule -> no access (main has no route into a setup)", missing is None, missing)
+
+        step("Misconfiguration: routing rule points to the wrong VRF, no firewall")
+        set_table(t12, "vrf-s7")
+        time.sleep(2)
+        wrong = t12.ident(timeout=3)
+        set_table(t12, "vrf-s12")
+        wait_until(lambda: (t12.ident(timeout=1) or {}).get("device") == "dev12", 15)
+        check("wrong VRF -> Alice (booked 12) reaches setup 7 (as in PBR)", wrong and wrong["device"] == "dev7", wrong)
+
+        step("Without firewall: what a setup and a tunnel reach")
+        dev12.run("ip route replace default via 192.168.1.254")
+        try:
+            dev_to_t7 = dev12.run("ping -c1 -W2 10.250.1.7", check=False).returncode == 0
+        finally:
+            dev12.run("ip route replace default via 192.168.1.1")
+        RESULTS["checks"]["without firewall: setup 12 device reaches the tunnel of setup 7 (route back = whole /16)"] = {
+            "ok": True, "detail": dev_to_t7}
+        print(f"  INFO without firewall, setup 12 device -> tunnel in setup 7: {'reached' if dev_to_t7 else 'blocked'}")
+        t7.run("ip route replace default dev wg-s7 src 10.250.1.7")
+        edge_from_tunnel = [f"{ip}:{p}" for ip in ("10.250.0.1", "10.20.10.1") for p in (22, 80)
+                            if probe(ws, ip, p, "setup7")]
+        RESULTS["checks"]["edge services reachable from a tunnel without firewall"] = {"ok": True, "detail": edge_from_tunnel}
+        print(f"  INFO reachable from a tunnel without filter: {edge_from_tunnel}")
+
+        step("Safeguard on RouterOS: can a rule bind the last octet of the tunnel address to a setup?")
+        probes = {}
+        for name, match in (("src-address=10.250.0.12/255.255.0.255", {"src-address": "10.250.0.12/255.255.0.255"}),
+                            ("out-interface=vlan112 (VRF member)", {"out-interface": "vlan112"}),
+                            ("out-interface=vrf-s12", {"out-interface": "vrf-s12"})):  # valid, see counters below
+            r = ros.put("ip/firewall/filter", chain="forward", action="passthrough", **{"in-interface": "wg0"},
+                        **match, comment=f"test: {name}")
+            probes[name] = r[".id"]
+        time.sleep(3)
+        seen = {n: {k: r.get(k) for k in ("invalid", "src-address")} for r in ros.get("ip/firewall/filter")
+                for n, i in probes.items() if r[".id"] == i}
+        for i in probes.values():
+            ros.delete("ip/firewall/filter", i)
+        check("a non-contiguous mask is turned into a range (10.250.0.12-10.250.255.12): no last-octet match",
+              seen["src-address=10.250.0.12/255.255.0.255"]["src-address"] == "10.250.0.12-10.250.255.12", seen)
+        check("out-interface=vrf-s12 is valid, out-interface=vlan112 is not",
+              seen["out-interface=vrf-s12"]["invalid"] == "false"
+              and seen["out-interface=vlan112 (VRF member)"]["invalid"] == "true", seen)
+
+        step("Edge firewall for hybrid: mangle marks per setup VLAN, filter on in-interface=wg0 + mark")
+        hybrid_apply_firewall(ros, prefixes=False)
+        first_fwd = [r for r in ros.get("ip/firewall/filter") if r["chain"] == "forward"][0][".id"]
+        probe_vrf = ros.put("ip/firewall/filter", chain="forward", action="passthrough",
+                            **{"in-interface": "wg0", "out-interface": "vrf-s12", "place-before": first_fwd},
+                            comment="test: out-interface=vrf-s12")
+        RESULTS["firewall_active_after_s"] = wait_until(
+            lambda: not probe(ws, "10.20.10.1", 22) and t12.ident(timeout=1) is not None)
+        invalid = [r.get("comment") for r in ros.get("ip/firewall/filter") if r.get("invalid") == "true"]
+        check("no edge firewall rule is invalid", not invalid, invalid)
+        a, b = t12.ident(), t7.ident()
+        fwd = {r.get("comment"): int(r.get("packets", 0)) for r in ros.get("ip/firewall/filter") if r["chain"] == "forward"}
+        vrf_hits = int([r for r in ros.get("ip/firewall/filter") if r[".id"] == probe_vrf[".id"]][0].get("packets", 0))
+        ros.delete("ip/firewall/filter", probe_vrf[".id"])
+        check("filter out-interface=vrf-s12 never matches traffic into the VRF (0 packets)", vrf_hits == 0, vrf_hits)
+        check("setups 12 and 7 work through their forward rules (packet marks from mangle)",
+              (a or {}).get("device") == "dev12" and (b or {}).get("device") == "dev7"
+              and fwd.get("vlab: setup 12", 0) > 0 and fwd.get("vlab: setup 7", 0) > 0, fwd)
+        after_fw = [f"{ip}:{p}" for ip in ("10.250.0.1", "10.20.10.1") for p in (22, 80) if probe(ws, ip, p, "setup7")]
+        check("edge services not reachable from a tunnel", not after_fw, after_fw)
+        dev12.run("ip route replace default via 192.168.1.254")
+        try:
+            dev_out = {t: dev12.run(f"ping -c1 -W2 {t}", check=False).returncode == 0
+                       for t in ("10.250.1.7", "10.250.1.12", "10.20.10.11", "10.20.10.1")}
+        finally:
+            dev12.run("ip route replace default via 192.168.1.1")
+        check("setup 12 reaches neither tunnels, corporate net nor edge", not any(dev_out.values()), dev_out)
+        set_table(t12, "vrf-s7")
+        time.sleep(2)
+        wrong_fw = t12.ident(timeout=3)
+        set_table(t12, "vrf-s12")
+        wait_until(lambda: (t12.ident(timeout=1) or {}).get("device") == "dev12", 15)
+        check("with this firewall a wrong VRF still reaches setup 7 (no address safeguard possible)",
+              wrong_fw and wrong_fw["device"] == "dev7", wrong_fw)
+
+        step("Variant: tunnel addresses 10.250.<setup>.<user> – one STATIC rule per setup, no rule per booking")
+        for t in reversed(tunnels):
+            t.close()
+        tunnels.clear()
+        for sid, _ in SETUPS:
+            ros.put("routing/rule", **{"src-address": f"10.250.{sid}.0/24"}, interface="wg0", table=f"vrf-s{sid}",
+                    action="lookup-only-in-table", comment=f"vlab: setup {sid} (static)")
+        hybrid_apply_firewall(ros, prefixes=True)
+        time.sleep(3)
+        before = (len(ros.get("interface/wireguard/peers")), len(ros.get("routing/rule")))
+        p12 = Tunnel(ros, ws, 12, "10.250.12.1", pbr=True, rule=False)    # peer only
+        tunnels.append(p12)
+        after = (len(ros.get("interface/wireguard/peers")), len(ros.get("routing/rule")))
+        check("one change per booking (only the peer)", (after[0] - before[0], after[1] - before[1]) == (1, 0))
+        p7 = Tunnel(ros, ws, 7, "10.250.7.1", netns="setup7", pbr=True, rule=False)
+        tunnels.append(p7)
+        wait_until(lambda: p12.ident(timeout=1) is not None and p7.ident(timeout=1) is not None, 20)
+        a, b = p12.ident(), p7.ident()
+        check("setups 12 and 7 reachable via the static prefix rules", (a or {}).get("device") == "dev12"
+              and (b or {}).get("device") == "dev7", {"setup12": a and a["device"], "setup7": b and b["device"]})
+        static = [r for r in ros.get("routing/rule") if r.get("src-address") == "10.250.12.0/24"][0]
+        ros.delete("routing/rule", static[".id"])
+        ros.put("routing/rule", **{"src-address": "10.250.12.0/24"}, interface="wg0", table="vrf-s7",
+                action="lookup-only-in-table", comment="vlab: setup 12 (WRONG)")
+        time.sleep(3)
+        wrong_static = p12.ident(timeout=3)
+        for r in ros.get("routing/rule"):
+            if r.get("src-address") == "10.250.12.0/24":
+                ros.delete("routing/rule", r[".id"])
+        ros.put("routing/rule", **{"src-address": "10.250.12.0/24"}, interface="wg0", table="vrf-s12",
+                action="lookup-only-in-table", comment="vlab: setup 12 (static)")
+        wait_until(lambda: p12.ident(timeout=1) is not None, 15)
+        check("static rule pointing to the wrong VRF -> dropped by the prefix firewall (fail-closed)",
+              wrong_static is None, wrong_static)
+        spoof = Tunnel(ros, ws, 12, "10.250.12.3", netns="spoof", src_ip="10.250.7.1", ifname="wg-spoof", pbr=True, rule=False)
+        tunnels.append(spoof)
+        check("a setup-12 key cannot send from a setup-7 address (cryptokey routing)", spoof.ident(timeout=3) is None)
+
+        step("Revoke: delete the peer via REST")
+        ros.delete("interface/wireguard/peers", p12.peer[".id"])
+        p12.peer = None
+        check("access ends after revoke (no answer within 2 s)", p12.ident(timeout=2) is None)
+        check("setup 7 unaffected by the revoke", (p7.ident() or {}).get("device") == "dev7")
+    finally:
+        for t in reversed(tunnels):
+            t.close()
+        for rule in ros.get("routing/rule"):
+            ros.delete("routing/rule", rule[".id"])
+
+
 def show(ros: ROS) -> None:
     for path in ("interface", "ip/vrf", "ip/address", "interface/wireguard", "interface/wireguard/peers",
                  "ip/firewall/nat", "ip/route", "routing/table", "routing/rule"):
@@ -414,10 +673,10 @@ def show(ros: ROS) -> None:
 def main() -> int:
     global LAB
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=("vrf", "pbr"), default="vrf")
+    ap.add_argument("--mode", choices=("vrf", "pbr", "hybrid"), default="vrf")
     ap.add_argument("--show", action="store_true")
     args = ap.parse_args()
-    LAB = "vlab-ros" if args.mode == "vrf" else "vlab-ros-pbr"
+    LAB = "vlab-ros" if args.mode == "vrf" else f"vlab-ros-{args.mode}"
     RESULTS["mode"] = args.mode
 
     host = chr_mgmt_ip()
@@ -443,6 +702,9 @@ def main() -> int:
     if args.mode == "pbr":
         pbr_trial(ros)
         return finish(ros, "pbr")
+    if args.mode == "hybrid":
+        hybrid_trial(ros)
+        return finish(ros, "hybrid")
 
     step("Configure VRF mode for setups 12 and 7 via REST")
     configure(ros)

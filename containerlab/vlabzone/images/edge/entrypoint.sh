@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # hwpool/edge – Linux lab edge.
 #
-#   eth1  corporate side 10.20.99.2/30 (only UDP 51800-52099 arrives here)
+#   eth1  corporate side 10.20.99.2/30 (only WireGuard UDP arrives here)
 #   eth2  trunk to lab-sw (one VLAN subinterface per setup)
 #   eth3  lab management 10.198.0.2/24
 #
-# EDGE_MODE=vrf (stage 1) | pbr (stage 2). Peers are NOT created here –
+# EDGE_MODE=vrf (stage 1) | pbr | hybrid (stage 2). Peers are NOT created here –
 # only `edge-ctl` (test fixtures now, the broker from stage 3) adds them.
 set -euo pipefail
 . /usr/local/lib/vlab/common.sh
@@ -29,6 +29,7 @@ mkdir -p /run/vlab/keys
 case "$EDGE_MODE" in
   vrf) . /usr/local/lib/vlab/edge-vrf.sh ;;
   pbr) . /usr/local/lib/vlab/edge-pbr.sh ;;
+  hybrid) . /usr/local/lib/vlab/edge-hybrid.sh ;;
   *)   die "unknown EDGE_MODE $EDGE_MODE" ;;
 esac
 

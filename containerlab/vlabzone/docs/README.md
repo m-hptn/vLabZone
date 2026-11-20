@@ -2,27 +2,28 @@
 
 What each node of the labs is configured to do, and **why**.
 
-There are two labs. Both are generated from the same source ([`config/setups.yaml`](../config/setups.yaml),
-[`topology/gen.py`](../topology/gen.py)) and differ only in how the lab edge separates the setups. Both model the real switching: an aggregation switch
+There are three labs. All are generated from the same source ([`config/setups.yaml`](../config/setups.yaml),
+[`topology/gen.py`](../topology/gen.py)) and differ only in how the lab edge separates the setups. All model the real switching: an aggregation switch
 with the edge, and system switches whose devices are grouped dynamically into setups.
 
 | Lab | Edge mode | Containers | Start | Document |
 |---|---|---|---|---|
 | `vlabzone-vrf` | one VRF per setup | `clab-vlabzone-vrf-<node>` | `make up` | [lab-vrf.md](lab-vrf.md) |
 | `vlabzone-pbr` | one `wg0` + policy routing, a gateway per setup | `clab-vlabzone-pbr-<node>` | `make up EDGE_MODE=pbr` | [lab-pbr.md](lab-pbr.md) |
+| `vlabzone-hybrid` | one `wg0` + policy routing into setup VRFs on the edge | `clab-vlabzone-hybrid-<node>` | `make up EDGE_MODE=hybrid` | [lab-hybrid.md](lab-hybrid.md) |
 
-Both labs can run at the same time (`make up-all`).
+All labs can run at the same time (`make up-all`).
 
 ## Viewing a lab
 
 Open one of these files with the containerlab VS Code extension (TopoViewer). Each shows the same lab with
 a different layout:
 
-| View | File (`vrf` or `pbr`) | Shows |
+| View | File (`vrf`, `pbr` or `hybrid`) | Shows |
 |---|---|---|
 | **Network** | `topology/vlabzone-vrf.clab.yml` | the switching: corporate → edge → aggregation switch → system switches → devices, one group per system switch with its current setups |
 | **Deployment** | `topology/views/vlabzone-vrf.deployment.clab.yml` | which real hardware/platform runs which node: vSphere (workspaces), corporate network, MikroTik (edge), Proxmox cluster (broker, PBR gateways, later access instances), Lancom aggregation switch, one rack per system switch |
-| **Logical** | `topology/views/vlabzone-vrf.logical.clab.yml` | the access path left to right: workspaces → corporate firewall → edge → **gateway** → setup. One lane per setup; in the PBR lab `gw-N` sits in the lane, in the VRF lab a label names the edge VRF that acts as gateway. Switches are shown separately as "transport", ungrouped devices in their own group |
+| **Logical** | `topology/views/vlabzone-vrf.logical.clab.yml` | the access path left to right: workspaces → corporate firewall → edge → **gateway** → setup. One lane per setup; in the PBR lab `gw-N` sits in the lane, in the VRF and hybrid labs a label names the edge VRF that acts as gateway. Switches are shown separately as "transport", ungrouped devices in their own group |
 
 - The files in `topology/views/` are generated copies of the topology with the same lab name: **view only,
   don't deploy them**, use `make up`. (Tested with containerlab 0.82: deploying a view while the lab runs
@@ -38,9 +39,10 @@ a different layout:
 |---|---|
 | [lab-vrf.md](lab-vrf.md) | VRF lab: overview, addresses, one request hop by hop, the VRF edge, switch, what carries over |
 | [lab-pbr.md](lab-pbr.md) | PBR lab: overview, addresses, one request hop by hop, the PBR edge, setup gateways, switch, what carries over |
-| [common.md](common.md) | nodes that are identical in both labs: corporate firewall, workspaces, broker, switches (aggregation + system switches, inventory and grouping), devices, management, settings for all nodes |
-| [vrf-vs-pbr.md](vrf-vs-pbr.md) | comparison of the two modes: test results (E10), advantages, recommendation |
-| [routeros-spike.md](routeros-spike.md) | stage 1b: MikroTik CHR as VRF edge – results, RouterOS configuration, firewall findings |
+| [lab-hybrid.md](lab-hybrid.md) | hybrid lab: why it exists, one request, the hybrid edge and its two safeguards, what can go wrong, what carries over |
+| [common.md](common.md) | nodes that are identical in all labs: corporate firewall, workspaces, broker, switches (aggregation + system switches, inventory and grouping), devices, management, settings for all nodes |
+| [vrf-vs-pbr.md](vrf-vs-pbr.md) | comparison of the three modes: test results (E10), RouterOS, advantages, recommendation |
+| [routeros-spike.md](routeros-spike.md) | stage 1b: MikroTik CHR as VRF, PBR and hybrid edge – results, RouterOS configuration, firewall findings |
 
 Concept and experiments: [`idea.md`](../../../idea.md) (German). Roadmap: [`PLAN.md`](../../../PLAN.md).
 

@@ -18,8 +18,8 @@ ROUTEROS_VERSION ?= 7.24.6
 APT_MIRROR       ?=
 
 # One lab per edge mode, generated from config/setups.yaml (topology/gen.py).
-# Both can run at the same time: make up-all / test-all / down-all
-MODES     := vrf pbr
+# All can run at the same time: make up-all / test-all / down-all
+MODES     := vrf pbr hybrid
 LAB_NAME   = vlabzone-$(EDGE_MODE)
 TOPO       = topology/vlabzone-$(EDGE_MODE).clab.yml
 SMOKE_TOPO := topology/smoke.clab.yml
@@ -80,11 +80,11 @@ smoke: ## Deploy a 2-node smoke lab, check VLAN/VRF/WireGuard support, destroy i
 	scripts/smoke.sh
 
 .PHONY: topology
-topology: venv ## Regenerate topology/vlabzone-{vrf,pbr}.clab.yml from config/setups.yaml
+topology: venv ## Regenerate topology/vlabzone-{vrf,pbr,hybrid}.clab.yml from config/setups.yaml
 	$(PY) topology/gen.py
 
 .PHONY: up
-up: topology ## Deploy the lab of EDGE_MODE (vrf|pbr) and wait until all nodes are ready
+up: topology ## Deploy the lab of EDGE_MODE (vrf|pbr|hybrid) and wait until all nodes are ready
 	$(CLAB) deploy -t $(TOPO) --reconfigure
 	scripts/wait-ready.sh $(LAB_NAME)
 
@@ -102,11 +102,11 @@ inspect: ## Show the running nodes of the lab of EDGE_MODE
 	$(CLAB) inspect -t $(TOPO)
 
 .PHONY: up-all down-all test-all
-up-all: ## Deploy both labs (vrf and pbr)
+up-all: ## Deploy all labs (vrf, pbr, hybrid)
 	@for m in $(MODES); do $(MAKE) --no-print-directory up EDGE_MODE=$$m || exit 1; done
-down-all: ## Destroy both labs
+down-all: ## Destroy all labs
 	@for m in $(MODES); do $(MAKE) --no-print-directory down EDGE_MODE=$$m; done
-test-all: venv ## Run the test suite against both labs
+test-all: venv ## Run the test suite against all labs
 	@rc=0; for m in $(MODES); do echo ">>> EDGE_MODE=$$m"; EDGE_MODE=$$m $(PY) -m pytest tests $(PYTEST_ARGS) || rc=1; done; exit $$rc
 
 .PHONY: test
@@ -118,12 +118,12 @@ test-stage%: venv ## Run the tests of one stage, e.g. make test-stage1
 
 .PHONY: spike-up spike-down spike-test
 SPIKE ?= vrf
-SPIKE_TOPO = topology/spike-routeros$(if $(filter pbr,$(SPIKE)),-pbr).clab.yml
-spike-up: ## Stage 1b: deploy the RouterOS trial lab, SPIKE=vrf|pbr (needs /dev/kvm + make build-routeros)
+SPIKE_TOPO = topology/spike-routeros$(if $(filter-out vrf,$(SPIKE)),-$(SPIKE)).clab.yml
+spike-up: ## Stage 1b: deploy the RouterOS trial lab, SPIKE=vrf|pbr|hybrid (needs /dev/kvm + make build-routeros)
 	$(CLAB) deploy -t $(SPIKE_TOPO) --reconfigure
-spike-test: venv ## Stage 1b: configure the CHR via REST and run the trial checks, SPIKE=vrf|pbr
+spike-test: venv ## Stage 1b: configure the CHR via REST and run the trial checks, SPIKE=vrf|pbr|hybrid
 	$(PY) scripts/spike-routeros.py --mode $(SPIKE)
-spike-down: ## Stage 1b: destroy the RouterOS trial lab, SPIKE=vrf|pbr
+spike-down: ## Stage 1b: destroy the RouterOS trial lab, SPIKE=vrf|pbr|hybrid
 	$(CLAB) destroy -t $(SPIKE_TOPO) --cleanup
 
 .PHONY: pcap

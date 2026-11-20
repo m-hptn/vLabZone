@@ -1,10 +1,13 @@
 """E01 – Does the one-time corporate allowance suffice?
 
-corp-fw only allows UDP 51800-52099 to the edge and TCP 443/8443 to the broker.
+corp-fw only allows WireGuard UDP to the edge (VRF: 51800-52099, PBR/hybrid: 51820)
+and TCP 443/8443 to the broker.
 ws-std reaches http://192.168.1.20 in setup 12; on the corporate side only
 encrypted WireGuard UDP is visible.
 """
 import pytest
+
+import json
 
 from tests.conftest import ALICE, ident, in_setup
 from tests.lib.capture import capture
@@ -34,4 +37,22 @@ def test_e01_access_through_allowance(lab, tunnel):
     write_protocol("E01", "One-time corporate allowance", True,
                    {"captured_packets": len(cap.lines), "non_wireguard_packets": len(non_wg)},
                    observations=f"pcap: {cap.pcap.name}; sample: {cap.lines[:2]}",
-                   consequence="UDP 51800-52099 + TCP 443/8443 suffice for access")
+                   consequence="the WireGuard allowance + TCP 443/8443 suffice for access")
+
+
+def test_e01_allowance_per_mode(lab, edge_mode):
+    """The corporate rule towards the edge: a port range in VRF mode, ONE port in PBR/hybrid."""
+    ruleset = json.loads(lab["corp-fw"].run("nft -j list chain inet corp forward").stdout)
+    ports = []
+    for item in ruleset["nftables"]:
+        rule = item.get("rule")
+        if not rule:
+            continue
+        exprs = rule["expr"]
+        if any(e.get("match", {}).get("right") == "eth10" for e in exprs):
+            ports += [e["match"]["right"] for e in exprs
+                      if e.get("match", {}).get("left", {}).get("payload", {}).get("field") == "dport"]
+    expected = {"range": [51800, 52099]} if edge_mode == "vrf" else 51820
+    write_protocol("E01-allowance", "Corporate WireGuard allowance", ports == [expected],
+                   {"mode": edge_mode, "dport": ports})
+    assert ports == [expected], ports

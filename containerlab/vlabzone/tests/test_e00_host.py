@@ -65,7 +65,7 @@ def _gen():
     return mod
 
 
-@pytest.mark.parametrize("mode", ["vrf", "pbr"])
+@pytest.mark.parametrize("mode", ["vrf", "pbr", "hybrid"])
 @pytest.mark.parametrize("view", ["network", "deployment", "logical"])
 def test_viewer_layout_complete_and_without_overlaps(mode, view):
     """Every node of the lab has a position in every view, and nothing overlaps

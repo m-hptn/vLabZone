@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the containerlab topologies from config/setups.yaml.
 
-    topology/gen.py            write topology/vlabzone-{vrf,pbr}.clab.yml, the view copies in
+    topology/gen.py            write topology/vlabzone-{vrf,pbr,hybrid}.clab.yml, the view copies in
                                topology/views/ and a viewer layout next to each of them
                                (*.clab.yml.annotations.json, containerlab VS Code extension)
     topology/gen.py --check    exit 1 if a committed topology or view file is out of date
@@ -12,9 +12,9 @@ always written in full; positions moved in the viewer are overwritten by the nex
 `make topology` / `make up`. Only the viewer settings (style preferences) of an existing
 layout file are kept. Layout files are not committed; topologies and views are.
 
-Both labs share everything except the edge mode and, in PBR mode, the setup
-gateways gw-N. Generating them from one source keeps them from drifting apart,
-and a new setup in setups.yaml shows up in both labs.
+All labs share everything except the edge mode, the corporate WireGuard allowance and,
+in PBR mode, the setup gateways gw-N. Generating them from one source keeps them from
+drifting apart, and a new setup in setups.yaml shows up in every lab.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-MODES = ("vrf", "pbr")
+MODES = ("vrf", "pbr", "hybrid")
 
 DIAGRAM = {
     "vrf": """\
@@ -46,6 +46,14 @@ DIAGRAM = {
 #
 # PBR mode: the edge has one wg0 and routes each tunnel IP (ip rule) to the
 # gateway gw-N of the booked setup via the transfer VLAN 199.""",
+    "hybrid": """\
+#   ws-std ─┐                                                                  ┌═ lab-sys1 ── sys1-dev1..4
+#   ws-power┼─ corp-fw ─ UDP 51820 ─ lab-edge ═ trunk (setup VLANs) ═ lab-agg ═══════┤
+#   ws-ci  ─┘    │  └─ TCP 443/8443 ─ broker  │                                  └═ lab-sys2 ── sys2-dev1..4
+#   corp-svc ────┘                      └── lab-mgmt (10.198.0.0/24): edge, broker, agg, sys*
+#
+# Hybrid mode: one wg0 (one port) like PBR, the setups in VRFs on the edge like VRF.
+# An ip rule per booking points a tunnel IP into the setup VRF's table.""",
 }
 
 
@@ -60,7 +68,7 @@ def build(mode: str, cfg: dict) -> dict:
     agg = cfg["aggregation"]
     nodes = {
         # corporate (simulated)
-        "corp-fw": node("router", ROLE="corp-fw"),
+        "corp-fw": node("router", ROLE="corp-fw", EDGE_MODE=mode),   # allowance depends on the mode
         "corp-svc": node("device", NAME="corp-svc", SWITCH="corp", IP="10.20.20.10/24", GW="10.20.20.1"),
         "ws-std": node("workspace", WS_IP="10.20.10.11/24", WS_MODE="desktop"),
         "ws-power": node("workspace", WS_IP="10.20.10.12/24", WS_MODE="power"),
@@ -296,7 +304,8 @@ def view_logical(mode: str, cfg: dict) -> Canvas:
         c.place(ws, X_WS, mid - ROW + i * ROW, "corporate")
     c.place("corp-svc", X_WS, mid + ROW * 2 + 20, "corporate")
     c.place("corp-fw", X_FW, mid, "corporate")
-    port = "UDP 51800+N per setup" if mode == "vrf" else "UDP 51820, ip rule per booking"
+    port = {"vrf": "UDP 51800+N per setup", "pbr": "UDP 51820, ip rule per booking",
+            "hybrid": "UDP 51820, ip rule per booking into the setup VRF"}[mode]
     c.group("edge", f"Lab edge – WireGuard ({port})", RED)
     c.place("lab-edge", X_EDGE, mid, "edge")
 

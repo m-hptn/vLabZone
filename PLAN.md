@@ -183,6 +183,18 @@ vLabZone/containerlab/vlabzone/
     - PBR: the `local` table makes every edge address reachable from tunnels; the edge firewall must
       restrict by destination (now done in both modes).
     - Any change to a WireGuard interface drops its sessions; workspaces recover after ~12–16 s (E18).
+11b. **Hybrid edge mode** ✅ implemented 2026-11-20. Constraint: the corporate firewall should need ONE rule
+    with ONE port. Hybrid = one `wg0` (51820) like PBR, setups as VRFs on the edge like VRF (no gateways),
+    `ip rule` per booking into the VRF's table. Lab `vlabzone-hybrid` (`make up EDGE_MODE=hybrid`);
+    corp-fw now writes the allowance per mode (VRF: 51800-52099, PBR/hybrid: 51820, E01 checks it).
+    Two safeguards, written once per setup: catch-all `ip rule iif wg0 unreachable` (also added to PBR) and a
+    forward rule per setup matching the last octet of the tunnel address (`ip saddr & 0.0.0.255 == N`) →
+    a wrong booking rule fails closed (E10; control without it: foreign access). Suites: VRF 63, PBR 67,
+    hybrid 63 passed. RouterOS trial (26/26): works; filter can't match `out-interface=vlanN` (invalid) or
+    `vrf-sN` (never matches) → mangle mark per setup VLAN; no last-octet match possible → the safeguard needs
+    tunnel addresses grouped by setup. Variant 10.250.<setup>.<user> tested: one static rule per setup,
+    1 change per booking, wrong rule fails closed. **Open decision: switch the tunnel address scheme to
+    10.250.<setup>.<user>** (docs/vrf-vs-pbr.md §4).
 12. `lab enter` namespaces in `ws-power` (E11), alias mode in `ws-ci` (E13).
 13. `acc-12-ser`: socat pty + fake console + ser2net RFC 2217 on :3001; pyserial client test (E14).
 14. RouterOS edge: `render.py` + `.rsc` templates for VRF/PBR/alias, `routeros_image` Ansible role,

@@ -29,5 +29,5 @@ def test_e04_masquerade_is_required(lab, tunnel, nat, edge_mode):
 
     write_protocol("E04", "Access despite wrong device gateway", True,
                    {"with_nat": with_nat, "without_nat": without_nat},
-                   setup_notes=f"MASQUERADE on {'lab-edge' if edge_mode == 'vrf' else 'gw-12'}",
+                   setup_notes=f"MASQUERADE on {'gw-12' if edge_mode == 'pbr' else 'lab-edge'}",
                    consequence="MASQUERADE on the setup VLAN is mandatory")

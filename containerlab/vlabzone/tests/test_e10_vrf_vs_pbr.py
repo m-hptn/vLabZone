@@ -1,6 +1,6 @@
-"""E10 – VRF or PBR?
+"""E10 – VRF, PBR or hybrid?
 
-All functional tests (E01–E06, E09) run against both labs (`make test-all`).
+All functional tests (E01–E06, E09) run against all three labs (`make test-all`).
 This module adds what differs between the modes:
 
   * configuration steps per booking (objects changed on the edge),
@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from tests.conftest import ALICE, ident, in_setup
+from tests.conftest import ALICE, BOB, ident, in_setup
 from tests.lib import labcfg
 from tests.lib.capture import capture
 from tests.lib.results import write_protocol
@@ -43,11 +43,35 @@ def test_e10_config_steps_per_booking(lab, tunnel, edge_mode):
 
     write_protocol("E10-steps", "Configuration steps per booking", True,
                    {"mode": edge_mode, "changed_objects": delta, "steps": steps},
-                   observations="VRF: one WireGuard peer. PBR: WireGuard peer + ip rule.")
+                   observations="VRF: one WireGuard peer. PBR and hybrid: WireGuard peer + ip rule.")
     assert steps == (1 if edge_mode == "vrf" else 2), delta
 
 
-# --- PBR ---------------------------------------------------------------------------
+# --- all modes ---------------------------------------------------------------------
+
+def test_e10_setup_cannot_reach_foreign_tunnels(lab, tunnel):
+    """A device of setup 12 (edge as gateway) cannot reach a workspace booked into setup 7.
+    In hybrid mode every setup table holds 10.250.0.0/16 dev wg0 (the way back to the
+    tunnels), in PBR gw-12 routes 10.250/16 to the edge – only the forward filter stops it."""
+    t7 = tunnel("ws-power", BOB, 7)
+    dev = lab[labcfg.device_at(12, "192.168.1.20")]
+    dev.run("ip route replace default via 192.168.1.254")
+    try:
+        reached = dev.run(f"ping -c1 -W2 {t7.ip}", check=False).returncode == 0
+    finally:
+        dev.run("ip route replace default via 192.168.1.1")
+    write_protocol("E10-foreign-tunnel", "Setup cannot reach tunnels of other setups", not reached,
+                   {"target": t7.ip, "reached": reached})
+    assert not reached
+
+
+# --- PBR and hybrid: one ip rule per booking ----------------------------------------
+
+@pytest.fixture
+def rules_mode(edge_mode):
+    if edge_mode == "vrf":
+        pytest.skip("per-booking ip rules only exist in PBR and hybrid mode")
+
 
 @pytest.fixture
 def pbr_only(edge_mode):
@@ -55,7 +79,17 @@ def pbr_only(edge_mode):
         pytest.skip("PBR misconfiguration – run with EDGE_MODE=pbr")
 
 
-def test_e10_pbr_missing_rule_fails_closed(lab, tunnel, pbr_only):
+@pytest.fixture
+def hybrid_only(edge_mode):
+    if edge_mode != "hybrid":
+        pytest.skip("hybrid misconfiguration – run with EDGE_MODE=hybrid")
+
+
+def set_rule(edge, table: int) -> None:
+    edge.run(f"ip rule del from {ALICE_IP} iif wg0; ip rule add from {ALICE_IP} iif wg0 lookup {table} pref 10000")
+
+
+def test_e10_rule_missing_fails_closed(lab, tunnel, rules_mode, edge_mode):
     edge = lab["lab-edge"]
     t = tunnel("ws-std", ALICE, 12)
     assert in_setup(ident(t.curl("http://192.168.1.20")), 12)
@@ -66,10 +100,29 @@ def test_e10_pbr_missing_rule_fails_closed(lab, tunnel, pbr_only):
     finally:
         edge.run(f"ip rule add from {ALICE_IP} iif wg0 lookup 1012 pref 10000")
 
-    write_protocol("E10-pbr-missing-rule", "PBR: ip rule missing", answer is None, {"answer": answer},
-                   observations="without a rule the main table is used; it has no route into any setup",
+    write_protocol(f"E10-{edge_mode}-missing-rule", f"{edge_mode}: ip rule missing", answer is None, {"answer": answer},
+                   observations="without a rule the catch-all `iif wg0 unreachable` (pref 30000) applies",
                    consequence="missing rule = no access (fail-closed)")
     assert answer is None, f"access without ip rule: {answer}"
+
+
+def test_e10_rule_without_route_never_reaches_main(lab, tunnel, rules_mode, edge_mode):
+    """A rule into a table without a route (setup removed, typo) must not fall through to the
+    main table – that holds the corporate routes (RouterOS trial: `action=lookup` leaked there)."""
+    edge = lab["lab-edge"]
+    tunnel("ws-std", ALICE, 12)
+    probe = f"ip route get 10.20.20.10 from {ALICE_IP} iif wg0"
+    set_rule(edge, 1099)                       # table without any route
+    try:
+        no_route = edge.run(probe, check=False)
+    finally:
+        set_rule(edge, 1012)
+    ok_route = edge.run(probe, check=False)
+    result = (no_route.stdout + no_route.stderr).strip()
+    write_protocol(f"E10-{edge_mode}-empty-table", f"{edge_mode}: rule into a table without route",
+                   "unreachable" in result, {"empty_table": result, "correct_table": (ok_route.stdout + ok_route.stderr).strip()},
+                   consequence="the catch-all rule stops the fall-through; without it the main table would answer")
+    assert "unreachable" in result, f"fell through: {result}"
 
 
 def test_e10_pbr_wrong_table_reaches_wrong_setup(lab, tunnel, pbr_only):
@@ -86,6 +139,34 @@ def test_e10_pbr_wrong_table_reaches_wrong_setup(lab, tunnel, pbr_only):
                    observations="Alice booked setup 12 but lands in setup 7 (same system switch) – nothing else stops it",
                    consequence="PBR is NOT fail-closed: one wrong per-booking rule gives access to a foreign setup")
     assert in_setup(answer, 7), f"expected to land in setup 7, got {answer}"
+
+
+def test_e10_hybrid_wrong_table_fails_closed(lab, tunnel, hybrid_only):
+    """Same mistake as in PBR. The per-setup forward rule (tunnel IP 10.250.x.N may only enter
+    setup N's VLAN) drops it. Control: without that rule the mistake leads into setup 7."""
+    edge = lab["lab-edge"]
+    t = tunnel("ws-std", ALICE, 12)
+    set_rule(edge, 1007)
+    permissive = None
+    try:
+        guarded = ident(t.curl("http://192.168.1.20", timeout=3))
+        # control: what the safeguard prevents
+        edge.run('nft insert rule inet edge setups iifname "wg0" oifname "eth2.107" accept comment "e10-control"')
+        permissive = ident(t.curl("http://192.168.1.20", timeout=3))
+    finally:
+        handle = edge.run("nft -a list chain inet edge setups | awk '/e10-control/ {print $NF}'").stdout.strip()
+        if handle:
+            edge.run(f"nft delete rule inet edge setups handle {handle}")
+        set_rule(edge, 1012)
+    restored = ident(t.curl("http://192.168.1.20"))
+    write_protocol("E10-hybrid-wrong-table", "hybrid: ip rule points to the wrong table", guarded is None,
+                   {"with_safeguard": guarded, "without_safeguard": permissive, "restored": restored},
+                   observations="the per-setup forward rule matches the setup number in the tunnel address",
+                   consequence="a wrong per-booking rule fails closed; only a wrong tunnel ADDRESS (consistent "
+                               "with the rule) would still lead into a foreign setup")
+    assert guarded is None, f"wrong table reached a setup despite the safeguard: {guarded}"
+    assert in_setup(permissive, 7), f"control: expected setup 7 without the safeguard, got {permissive}"
+    assert in_setup(restored, 12), restored
 
 
 def test_e10_pbr_gateways_isolated(lab, tunnel, pbr_only):

@@ -29,6 +29,10 @@ wg set wg0 private-key /run/vlab/keys/wg0.key listen-port "$PORT"
 ip addr add "$TUN_IP/${TUN_NET#*/}" dev wg0
 ip link set wg0 up
 
+# A booking rule into a table without a route would fall through to the main table
+# (corporate routes). The catch-all ends the lookup there: no route = unreachable.
+ip rule add iif wg0 unreachable pref 30000
+
 while read -r id _vlan _net _gw; do
   gw_ip=$(vlab-cfg gw-ip "$id")
   ip route add default via "$gw_ip" dev "$TVIF" table $((1000 + id))

@@ -25,6 +25,7 @@ topology:
       image: hwpool/router:latest
       env:
         ROLE: corp-fw
+        EDGE_MODE: vrf
     corp-svc:
       image: hwpool/device:latest
       env:

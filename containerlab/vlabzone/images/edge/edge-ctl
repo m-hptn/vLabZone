@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # edge-ctl – the only interface to grant or revoke access on the Linux edge.
 # Used by the test fixtures (stage 1/2) and by the broker over SSH (stage 3).
-# Same commands in both edge modes; what they change differs:
+# Same commands in all edge modes; what they change differs:
 #
-#                     VRF mode                         PBR mode
-#   peer add          wg peer on wg-sN                 wg peer on wg0 + ip rule -> table 1000+N
-#   peer del          remove peer                      remove peer + ip rule
-#   pubkey/port       of wg-sN                         of wg0 (same for all setups)
-#   nat on|off        MASQUERADE on the edge           not on the edge (gw-N: gw-ctl nat)
+#                     VRF mode               PBR mode                      hybrid mode
+#   peer add          wg peer on wg-sN       wg peer on wg0 + ip rule      wg peer on wg0 + ip rule
+#   peer del          remove peer            remove peer + ip rule         remove peer + ip rule
+#   pubkey/port       of wg-sN               of wg0 (same for all setups)  of wg0
+#   nat on|off        on the edge            on gw-N (gw-ctl nat)          on the edge
 #
 #   edge-ctl peer add  --setup N --pubkey KEY --ip 10.250.U.N   grant access
 #   edge-ctl peer del  --setup N --pubkey KEY                   revoke access
 #   edge-ctl peer list [--setup N]                              setup pubkey ip handshake rx tx
 #   edge-ctl pubkey --setup N                                   public key the workspace must use
 #   edge-ctl port   --setup N                                   UDP port the workspace must use
-#   edge-ctl nat on|off --setup N                               MASQUERADE on/off (E04, VRF only)
+#   edge-ctl nat on|off --setup N                               MASQUERADE on/off (E04, VRF + hybrid)
 #   edge-ctl status                                             mode, setups, peers
 set -euo pipefail
 
@@ -40,9 +40,11 @@ need_setup() {
 valid_key() { [[ "$PUBKEY" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$ ]] || die "invalid public key"; }
 # WireGuard interface that serves a setup
 wg_if() { if [[ $MODE == vrf ]]; then echo "wg-s$SETUP"; else echo wg0; fi; }
+# PBR and hybrid: one ip rule per booking selects the setup's table
+rules() { [[ $MODE != vrf ]]; }
 table() { echo $((1000 + SETUP)); }
 peer_ip() { wg show "$(wg_if)" allowed-ips | awk -v k="$PUBKEY" '$1==k {print $2}' | cut -d/ -f1; }
-# PBR: which setup a tunnel IP is routed to (from the ip rules)
+# PBR/hybrid: which setup a tunnel IP is routed to (from the ip rules)
 pbr_setup_of() {
   ip -j rule show | jq -r --arg ip "$1" '.[] | select(.src==$ip and .iif=="wg0") | .table' | head -1 \
     | awk '{ if ($1 ~ /^[0-9]+$/) print $1 - 1000 }'
@@ -58,8 +60,8 @@ case "$cmd" in
         [[ "$IP" =~ ^10\.250\.[0-9]+\.[0-9]+$ ]] || die "--ip must be a 10.250.x.y tunnel address"
         # Cryptokey routing: this key may only send from exactly this tunnel IP
         wg set "$(wg_if)" peer "$PUBKEY" allowed-ips "$IP/32"
-        if [[ $MODE == pbr ]]; then
-          # Step 2 in PBR mode: route this tunnel IP to the setup's gateway
+        if rules; then
+          # Step 2 in PBR/hybrid mode: route this tunnel IP to the setup's gateway
           ip rule del from "$IP" iif wg0 2>/dev/null || true
           ip rule add from "$IP" iif wg0 lookup "$(table)" pref 10000
         fi
@@ -68,7 +70,7 @@ case "$cmd" in
         need_setup; valid_key
         ip_=$(peer_ip)
         wg set "$(wg_if)" peer "$PUBKEY" remove
-        if [[ $MODE == pbr && -n "$ip_" ]]; then
+        if rules && [[ -n "$ip_" ]]; then
           ip rule del from "$ip_" iif wg0 lookup "$(table)" 2>/dev/null || true
         fi
         # drop tracked flows so running sessions end immediately (E08)
@@ -93,7 +95,7 @@ case "$cmd" in
   port)   shift; parse "$@"; need_setup; wg show "$(wg_if)" listen-port ;;
   nat)
     shift 2 || true; parse "$@"; need_setup
-    [[ $MODE == vrf ]] || die "PBR mode: NAT runs on gw-$SETUP (gw-ctl nat on|off there)"
+    [[ $MODE != pbr ]] || die "PBR mode: NAT runs on gw-$SETUP (gw-ctl nat on|off there)"
     vlan=$(vlab-cfg setup "$SETUP" vlan)
     case "$sub" in
       off) nft flush chain inet edge "nat-s$SETUP"; echo "NAT off for setup $SETUP" ;;

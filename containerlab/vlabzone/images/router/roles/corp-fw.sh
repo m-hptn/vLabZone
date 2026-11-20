@@ -1,6 +1,8 @@
 # corp-fw: simulated corporate network. Routes between the workspace net, the
 # corporate services and the lab, and enforces ONLY the one-time allowance
-# (config/corp-fw.nft): UDP 51800-52099 to the lab edge, TCP 443/8443 to the broker.
+# (config/corp-fw.nft): WireGuard UDP to the lab edge, TCP 443/8443 to the broker.
+# The WireGuard ports depend on the edge mode: VRF needs one port per setup
+# (51800-52099), PBR and hybrid a single port (51820).
 #
 #   eth1-eth3  workspaces (bridged: 10.20.10.0/24)
 #   eth4       corporate services 10.20.20.0/24
@@ -24,5 +26,9 @@ sysctl_set net.ipv4.ip_forward 1
 # if the host has br_netfilter loaded (Docker often loads it) – then it matters.
 [[ -e /proc/sys/net/bridge/bridge-nf-call-iptables ]] && sysctl_set net.bridge.bridge-nf-call-iptables 0
 
-nft -f "$VLAB_CONFIG_DIR/corp-fw.nft"
-log "corporate allowance loaded from corp-fw.nft"
+case "${EDGE_MODE:-vrf}" in
+  vrf) WG_PORTS="$(vlab-cfg get edge.wg_port_base)-$(( $(vlab-cfg get edge.wg_port_base) + 299 ))" ;;
+  *)   WG_PORTS=$(vlab-cfg get edge.wg_port_pbr) ;;
+esac
+{ echo "define WG_PORTS = $WG_PORTS"; cat "$VLAB_CONFIG_DIR/corp-fw.nft"; } | nft -f -
+log "corporate allowance loaded from corp-fw.nft (WireGuard UDP $WG_PORTS)"

@@ -34,3 +34,11 @@
 
 - name: Install containerlab
   ansible.builtin.include_tasks: containerlab.yml
+
+- name: Allow {{ vlab_user }} to run containerlab without sudo (setuid binary, group clab_admins)
+  become: true
+  ansible.builtin.user:
+    name: "{{ vlab_user }}"
+    groups: clab_admins
+    append: true
+  when: vlab_user != 'root'

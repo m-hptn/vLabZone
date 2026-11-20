@@ -2,6 +2,7 @@
   ansible.builtin.script:
     cmd: >-
       {{ playbook_dir }}/../../scripts/preflight.sh --stage pre --profile {{ vlab_profile }}
+      --mgmt-subnet {{ vlab_mgmt_subnet }}
       {{ '--routeros' if vlab_routeros_enabled | bool else '' }}
   register: vlab_preflight
   changed_when: false

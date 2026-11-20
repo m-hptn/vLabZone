@@ -31,6 +31,12 @@ vlab_routeros_version: "7.24.6"
 vlab_routeros_sha256: 30ee295fa1807c3de9819c7308e6b1629cf4bda29e7a42ea27788af75f63fdaf
 vlab_vrnetlab_ref: 85445edfdf366b3d5f04942a10bb5a7d22df61a7
 
+# --- containerlab management network ------------------------------------------
+# Always created by containerlab (nodes don't use it). Must not overlap any other
+# Docker network or route on the host – change per host if the preflight complains.
+vlab_mgmt_subnet: 172.31.254.0/24
+vlab_mgmt_subnet6: "3fff:172:31:254::/64"
+
 # --- Build settings for restricted networks ----------------------------------
 vlab_apt_mirror: ""
 vlab_http_proxy: ""

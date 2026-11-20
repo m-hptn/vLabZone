@@ -6,7 +6,9 @@ SHELL := /bin/bash
 
 # Per-host settings (rendered by Ansible or copied from .env.example)
 -include .env
-export EDGE_IMPL EDGE_MODE VLAB_PROFILE VLAB_ROUTEROS_ENABLED ROUTEROS_VERSION
+# Pinned version on purpose: no "newer version available" banner
+export CLAB_VERSION_CHECK := disable
+export EDGE_IMPL EDGE_MODE VLAB_PROFILE VLAB_ROUTEROS_ENABLED ROUTEROS_VERSION VLAB_MGMT_SUBNET VLAB_MGMT_SUBNET6
 
 VERSION          := $(shell cat VERSION)
 EDGE_IMPL        ?= linux
@@ -19,8 +21,9 @@ LAB_NAME  := hwpool
 TOPO      ?= topology/hwpool.clab.yml
 SMOKE_TOPO := topology/smoke.clab.yml
 
-# containerlab needs root; tests and builds only need the docker group
-SUDO  := $(if $(filter 0,$(shell id -u)),,sudo)
+# containerlab is installed setuid: members of clab_admins (added by Ansible) need no sudo.
+# Root or clab_admins -> no sudo; everyone else falls back to sudo.
+SUDO  := $(if $(or $(filter 0,$(shell id -u)),$(filter clab_admins,$(shell id -nG))),,sudo)
 CLAB  := $(SUDO) containerlab
 VENV  := .venv
 PY    := $(VENV)/bin/python

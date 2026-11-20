@@ -3,6 +3,13 @@
 # features VLAN, VRF and WireGuard are usable inside privileged nodes.
 # Used by `make smoke` (scripts/smoke.sh) and the Ansible role lab_deploy.
 name: vlab-smoke
+# containerlab always creates a management network, even though no node uses it
+# (network-mode: none). Its subnet must not overlap other Docker networks on the host,
+# so it is configurable per host (.env / Ansible vlab_mgmt_subnet).
+mgmt:
+  network: vlab-mgmt
+  ipv4-subnet: ${VLAB_MGMT_SUBNET:=172.31.254.0/24}
+  ipv6-subnet: ${VLAB_MGMT_SUBNET6:=3fff:172:31:254::/64}
 topology:
   defaults:
     kind: linux

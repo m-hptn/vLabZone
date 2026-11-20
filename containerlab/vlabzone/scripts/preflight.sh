@@ -5,6 +5,8 @@
 #   --stage post  after provisioning: additionally docker, containerlab, loaded modules (default)
 #   --profile     base | scale   (resource thresholds, see idea.md §3.2)
 #   --routeros    also check KVM for the RouterOS CHR edge
+#   --mgmt-subnet containerlab management subnet to check for overlaps
+#                 (default: $VLAB_MGMT_SUBNET or 172.31.254.0/24)
 #
 # Exit code: 0 = ok (warnings allowed), 1 = at least one FAIL.
 # The Ansible role `preflight` runs this same script, so local and remote checks are identical.
@@ -13,12 +15,14 @@ set -uo pipefail
 STAGE=post
 PROFILE=base
 ROUTEROS=false
+MGMT_SUBNET="${VLAB_MGMT_SUBNET:-172.31.254.0/24}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --stage) STAGE="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --routeros) ROUTEROS=true; shift ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    --mgmt-subnet) MGMT_SUBNET="$2"; shift 2 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -96,6 +100,37 @@ fi
 if check_tool containerlab; then
   ok "containerlab $(containerlab version 2>/dev/null | awk '/version:/ {print $2; exit}')"
 fi
+
+# --- containerlab management subnet ---------------------------------------
+# Overlaps with other Docker networks or host routes make `containerlab deploy` fail.
+{
+  ip -4 route show | awk '$1 ~ /\// {print "route", $1, $3}'
+  if command -v docker >/dev/null 2>&1; then
+    docker network ls -q 2>/dev/null | xargs -r docker network inspect \
+      -f '{{.Name}}{{range .IPAM.Config}} {{.Subnet}}{{end}}' 2>/dev/null | awk '{for (i=2;i<=NF;i++) print "docker", $i, $1}'
+  fi
+} | python3 -c '
+import ipaddress, sys
+want = ipaddress.ip_network(sys.argv[1], strict=False)
+hits = []
+for line in sys.stdin:
+    kind, net, name = line.split()[:3]
+    if name in ("vlab-mgmt",) or ":" in net:
+        continue
+    try:
+        if ipaddress.ip_network(net, strict=False).overlaps(want):
+            hits.append(f"{kind} {name} {net}")
+    except ValueError:
+        pass
+print("; ".join(hits))
+sys.exit(1 if hits else 0)
+' "$MGMT_SUBNET" > /tmp/.vlab-overlap.$$ 2>&1
+if [[ $? -eq 0 ]]; then
+  ok "management subnet $MGMT_SUBNET is free"
+else
+  fail "management subnet $MGMT_SUBNET overlaps: $(cat /tmp/.vlab-overlap.$$) – set VLAB_MGMT_SUBNET / vlab_mgmt_subnet"
+fi
+rm -f /tmp/.vlab-overlap.$$
 
 # --- KVM (RouterOS CHR) ------------------------------------------------------
 if [[ "$ROUTEROS" == true ]]; then

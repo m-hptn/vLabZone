@@ -5,7 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TOPO=topology/smoke.clab.yml
-SUDO=$([[ $(id -u) -eq 0 ]] && echo "" || echo sudo)
+# containerlab is setuid; root and members of clab_admins need no sudo
+SUDO=sudo
+if [[ $(id -u) -eq 0 ]] || id -nG | tr ' ' '\n' | grep -qx clab_admins; then SUDO=; fi
 A=clab-vlab-smoke-a
 B=clab-vlab-smoke-b
 

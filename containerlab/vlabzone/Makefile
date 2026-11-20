@@ -20,8 +20,10 @@ APT_MIRROR       ?=
 # One lab per edge mode, generated from config/setups.yaml (topology/gen.py).
 # All can run at the same time: make up-all / test-all / down-all
 MODES     := vrf pbr hybrid
-LAB_NAME   = vlabzone-$(EDGE_MODE)
-TOPO       = topology/vlabzone-$(EDGE_MODE).clab.yml
+# EDGE_IMPL=routeros: same lab with the MikroTik CHR as lab-edge (vlabzone-<mode>-ros)
+ROS_SUFFIX = $(if $(filter routeros,$(EDGE_IMPL)),-ros)
+LAB_NAME   = vlabzone-$(EDGE_MODE)$(ROS_SUFFIX)
+TOPO       = topology/$(LAB_NAME).clab.yml
 SMOKE_TOPO := topology/smoke.clab.yml
 
 # containerlab is installed setuid: members of clab_admins (added by Ansible) need no sudo.
@@ -84,9 +86,12 @@ topology: venv ## Regenerate topology/vlabzone-{vrf,pbr,hybrid}.clab.yml from co
 	$(PY) topology/gen.py
 
 .PHONY: up
-up: topology ## Deploy the lab of EDGE_MODE (vrf|pbr|hybrid) and wait until all nodes are ready
+up: topology ## Deploy the lab of EDGE_MODE (vrf|pbr|hybrid), EDGE_IMPL (linux|routeros); wait until ready
 	$(CLAB) deploy -t $(TOPO) --reconfigure
 	scripts/wait-ready.sh $(LAB_NAME)
+ifeq ($(EDGE_IMPL),routeros)
+	$(PY) drivers/edge_routeros.py --lab $(LAB_NAME) --mode $(EDGE_MODE) configure
+endif
 
 .PHONY: down
 down: ## Destroy the lab of EDGE_MODE

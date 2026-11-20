@@ -6,6 +6,10 @@
                                (*.clab.yml.annotations.json, containerlab VS Code extension)
     topology/gen.py --check    exit 1 if a committed topology or view file is out of date
 
+For every mode there is also a lab with the MikroTik as edge (EDGE_IMPL=routeros):
+topology/vlabzone-<mode>-ros.clab.yml – identical except for `lab-edge` (RouterOS CHR, configured
+over REST by drivers/edge_routeros.py, see docs/lab-routeros.md). Network view only.
+
 Three views per lab (see VIEWS): network (switching), deployment (which real hardware runs
 which node) and logical (workspace → firewall → edge → gateway → setup). The layouts are
 always written in full; positions moved in the viewer are overwritten by the next
@@ -53,7 +57,7 @@ DIAGRAM = {
 #   corp-svc ────┘                      └── lab-mgmt (10.198.0.0/24): edge, broker, agg, sys*
 #
 # Hybrid mode: one wg0 (one port) like PBR, the setups in VRFs on the edge like VRF.
-# An ip rule per booking points a tunnel IP into the setup VRF's table.""",
+# One ip rule per setup points its tunnel prefix 10.250.N.0/24 into the setup VRF's table.""",
 }
 
 
@@ -64,7 +68,11 @@ def node(image: str, **env) -> dict:
     return n
 
 
-def build(mode: str, cfg: dict) -> dict:
+def lab_name(mode: str, impl: str = "linux") -> str:
+    return f"vlabzone-{mode}" + ("-ros" if impl == "routeros" else "")
+
+
+def build(mode: str, cfg: dict, impl: str = "linux") -> dict:
     agg = cfg["aggregation"]
     nodes = {
         # corporate (simulated)
@@ -75,7 +83,7 @@ def build(mode: str, cfg: dict) -> dict:
         "ws-ci": node("workspace", WS_IP="10.20.10.13/24", WS_MODE="alias"),
         # lab zone
         "lab-edge": node("edge", EDGE_MODE=mode),
-        "broker": node("broker", EDGE_IMPL="${EDGE_IMPL:=linux}", EDGE_MODE=mode),
+        "broker": node("broker", EDGE_IMPL=impl, EDGE_MODE=mode),
         f"lab-{agg['name']}": node("router", ROLE="switch", SWITCH=agg["name"], EDGE_MODE=mode),
     }
     mgmt_members = ["lab-edge:eth3", "broker:eth2", f"lab-{agg['name']}:eth2"]
@@ -106,8 +114,22 @@ def build(mode: str, cfg: dict) -> dict:
     nodes["lab-mgmt"] = node("mgmt", PORTS=" ".join(mgmt_ports))
     links += [(member, f"lab-mgmt:{port}") for member, port in zip(mgmt_members, mgmt_ports)]
 
+    defaults = {
+        "kind": "linux",
+        # no Docker management interface: nothing can bypass corp-fw
+        "network-mode": "none",
+        "binds": ["../config:/etc/vlab:ro"],
+    }
+    if impl == "routeros":
+        # vrnetlab needs the management network for the CHR (ether1, REST). `network-mode: none`
+        # moves from the defaults to every other node, so lab-edge is the only node on it.
+        nodes["lab-edge"] = {"kind": "mikrotik_ros", "image": "vrnetlab/mikrotik_routeros:${ROUTEROS_VERSION:=7.24.6}"}
+        for name, n in nodes.items():
+            if name != "lab-edge":
+                n["network-mode"] = "none"
+        del defaults["network-mode"]
     return {
-        "name": f"vlabzone-{mode}",
+        "name": lab_name(mode, impl),
         "mgmt": {
             # always created by containerlab, but no node is attached (network-mode: none)
             "network": "vlab-mgmt",
@@ -115,12 +137,7 @@ def build(mode: str, cfg: dict) -> dict:
             "ipv6-subnet": "${VLAB_MGMT_SUBNET6:=3fff:172:31:254::/64}",
         },
         "topology": {
-            "defaults": {
-                "kind": "linux",
-                # no Docker management interface: nothing can bypass corp-fw
-                "network-mode": "none",
-                "binds": ["../config:/etc/vlab:ro"],
-            },
+            "defaults": defaults,
             "nodes": nodes,
             "links": [{"endpoints": list(pair)} for pair in links],
         },
@@ -323,14 +340,14 @@ def view_logical(mode: str, cfg: dict) -> Canvas:
 LAYOUTS = {"network": view_network, "deployment": view_deployment, "logical": view_logical}
 
 
-def topo_path(mode: str, view: str) -> Path:
+def topo_path(mode: str, view: str, impl: str = "linux") -> Path:
     if view == "network":
-        return ROOT / "topology" / f"vlabzone-{mode}.clab.yml"
+        return ROOT / "topology" / f"{lab_name(mode, impl)}.clab.yml"
     return ROOT / "topology" / "views" / f"vlabzone-{mode}.{view}.clab.yml"
 
 
-def write_layout(mode: str, view: str, cfg: dict) -> None:
-    path = Path(str(topo_path(mode, view)) + ".annotations.json")
+def write_layout(mode: str, view: str, cfg: dict, impl: str = "linux") -> None:
+    path = Path(str(topo_path(mode, view, impl)) + ".annotations.json")
     settings = None
     if path.exists():
         try:
@@ -343,12 +360,15 @@ def write_layout(mode: str, view: str, cfg: dict) -> None:
         print(f"wrote {path.relative_to(ROOT)}")
 
 
-def render(mode: str, cfg: dict, view: str = "network") -> str:
-    topo = build(mode, cfg)
+def render(mode: str, cfg: dict, view: str = "network", impl: str = "linux") -> str:
+    topo = build(mode, cfg, impl)
     if view == "network":
+        edge = ("lab-edge = MikroTik RouterOS CHR (EDGE_IMPL=routeros), configured by drivers/edge_routeros.py,\n"
+                "# docs/lab-routeros.md\n#\n" if impl == "routeros" else "")
         header = (
             f"# GENERATED by topology/gen.py from config/setups.yaml – do not edit, run `make topology`.\n"
             f"#\n# vLabZone lab, edge mode {mode.upper()} (idea.md §4, addresses §4.3, nodes: docs/lab-{mode}.md)\n#\n"
+            + (f"# {edge}" if edge else "") +
             f"{DIAGRAM[mode]}\n"
         )
     else:
@@ -371,19 +391,19 @@ def main() -> int:
 
     cfg = yaml.safe_load((ROOT / "config" / "setups.yaml").read_text())
     stale = []
-    for mode in MODES:
-        for view in VIEWS:
-            path = topo_path(mode, view)
-            text = render(mode, cfg, view)
-            if args.check:
-                if not path.exists() or path.read_text() != text:
-                    stale.append(str(path.relative_to(ROOT)))
-                continue
-            path.parent.mkdir(exist_ok=True)
+    variants = [(m, v, "linux") for m in MODES for v in VIEWS] + [(m, "network", "routeros") for m in MODES]
+    for mode, view, impl in variants:
+        path = topo_path(mode, view, impl)
+        text = render(mode, cfg, view, impl)
+        if args.check:
             if not path.exists() or path.read_text() != text:
-                path.write_text(text)
-                print(f"wrote {path.relative_to(ROOT)}")
-            write_layout(mode, view, cfg)
+                stale.append(str(path.relative_to(ROOT)))
+            continue
+        path.parent.mkdir(exist_ok=True)
+        if not path.exists() or path.read_text() != text:
+            path.write_text(text)
+            print(f"wrote {path.relative_to(ROOT)}")
+        write_layout(mode, view, cfg, impl)
     if stale:
         print(f"out of date: {', '.join(stale)} – run `make topology`", file=sys.stderr)
         return 1

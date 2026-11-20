@@ -209,6 +209,16 @@ vLabZone/containerlab/vlabzone/
 14. RouterOS edge: `render.py` + `.rsc` templates for VRF/PBR/alias, `routeros_image` Ansible role,
     `EDGE_IMPL` switch in Makefile/topology; stage 1–2 suites pass with `EDGE_IMPL=routeros` (peers added
     via REST from the test fixtures).
+    ✅ implemented 2026-11-20 (differently from the original idea: REST driver instead of `.rsc` templates).
+    Labs `vlabzone-<mode>-ros` (`make up EDGE_IMPL=routeros EDGE_MODE=…`): same topology, lab-edge = CHR.
+    `drivers/edge_routeros.py` configures the router from `setups.yaml` over REST and implements the
+    `edge-ctl` commands (tests and later the broker use it). Tests: `RouterOSEdge` node maps `edge-ctl` to the
+    driver, skips Linux-internal checks; E27 (`test_e27_routeros_parity.py`) repeats E10's misconfigurations
+    via REST – same results as Linux. Findings: VRF interfaces/tables appear asynchronously (driver waits);
+    the VRF tunnel-ping rule needs `src-address=10.250.N.0/24` (setup devices could ping the edge –
+    missed in stage 1b); free CHR licence 1 Mbit/s (E11 load limited to 400 kbit/s per stream).
+    Docs: `containerlab/vlabzone/docs/lab-routeros.md`. Ansible role `routeros_image` already existed.
+    Suites: Linux VRF 68, PBR 73, hybrid 69 passed; MikroTik VRF 67, PBR 72, hybrid 69 passed (0 failed).
 
 ### Stage 2a – Real-world switching: aggregation + system switches, dynamic setups  ✅ implemented 2026-11-20
 Real topology (`device_arc.drawio`): MikroTik and Proxmox nodes on a Lancom aggregation switch, which

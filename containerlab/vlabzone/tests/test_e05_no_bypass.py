@@ -23,7 +23,11 @@ def ping_ok(node, host: str) -> bool:
 
 
 @pytest.mark.parametrize("name", LAB_NODES)
-def test_e05_no_management_interface(lab, name):
+def test_e05_no_management_interface(lab, name, edge_impl):
+    if name == "lab-edge" and edge_impl == "routeros":
+        pytest.skip("RouterOS edge: vrnetlab needs ether1 on the containerlab management network for REST. "
+                    "No other node is attached to that network, so it is no path past corp-fw "
+                    "(docs/lab-routeros.md)")
     assert lab[name].run("test -e /sys/class/net/eth0", check=False).returncode != 0, \
         f"{name} has eth0 – Docker management network would bypass corp-fw"
 

@@ -18,6 +18,7 @@
 #   edge-ctl pubkey --setup N                                   public key the workspace must use
 #   edge-ctl port   --setup N                                   UDP port the workspace must use
 #   edge-ctl nat on|off --setup N                               MASQUERADE on/off (E04, VRF + hybrid)
+#   edge-ctl neigh flush --setup N                              forget the setup's ARP entries (E20, VRF + hybrid)
 #   edge-ctl status                                             mode, setups, peers
 set -euo pipefail
 
@@ -112,6 +113,12 @@ case "$cmd" in
            echo "NAT on for setup $SETUP" ;;
       *) die "usage: edge-ctl nat on|off --setup N" ;;
     esac ;;
+  neigh)
+    shift 2 || true; parse "$@"; need_setup
+    [[ $MODE != pbr ]] || die "PBR mode: the setup's neighbours live on gw-$SETUP"
+    [[ $sub == flush ]] || die "usage: edge-ctl neigh flush --setup N"
+    ip neigh flush dev "eth2.$(vlab-cfg setup "$SETUP" vlan)"
+    echo "neighbours of setup $SETUP flushed" ;;
   status)
     echo "mode $MODE"
     if [[ $MODE == vrf ]]; then
@@ -128,5 +135,5 @@ case "$cmd" in
         fi
       done
     fi ;;
-  *) die "unknown command $cmd (peer, pubkey, port, nat, status)" ;;
+  *) die "unknown command $cmd (peer, pubkey, port, nat, neigh, status)" ;;
 esac

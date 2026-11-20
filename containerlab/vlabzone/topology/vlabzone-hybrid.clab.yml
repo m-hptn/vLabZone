@@ -8,7 +8,7 @@
 #   corp-svc ────┘                      └── lab-mgmt (10.198.0.0/24): edge, broker, agg, sys*
 #
 # Hybrid mode: one wg0 (one port) like PBR, the setups in VRFs on the edge like VRF.
-# An ip rule per booking points a tunnel IP into the setup VRF's table.
+# One ip rule per setup points its tunnel prefix 10.250.N.0/24 into the setup VRF's table.
 name: vlabzone-hybrid
 mgmt:
   network: vlab-mgmt
@@ -55,7 +55,7 @@ topology:
     broker:
       image: hwpool/broker:latest
       env:
-        EDGE_IMPL: ${EDGE_IMPL:=linux}
+        EDGE_IMPL: linux
         EDGE_MODE: hybrid
     lab-agg:
       image: hwpool/router:latest

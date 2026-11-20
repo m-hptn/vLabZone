@@ -75,11 +75,11 @@ add chain=input connection-state=established,related action=accept
 add chain=input connection-state=invalid action=drop
 add chain=input in-interface=ether1 action=accept comment="management (lab: REST/SSH)"
 add chain=input in-interface=ether2 protocol=udp dst-port=51800-52099 action=accept comment="WireGuard"
-add chain=input in-interface=vrf-s12 dst-address=10.250.0.1 protocol=icmp action=accept
+add chain=input in-interface=vrf-s12 src-address=10.250.12.0/24 dst-address=10.250.0.1 protocol=icmp action=accept
 add chain=input action=drop
 add chain=forward connection-state=established,related action=accept
 add chain=forward connection-state=invalid action=drop
-add chain=forward in-interface=vrf-s12 src-address=10.250.0.0/16 dst-address=192.168.1.0/24 action=accept
+add chain=forward in-interface=vrf-s12 src-address=10.250.12.0/24 dst-address=192.168.1.0/24 action=accept
 add chain=forward action=drop
 ```
 
@@ -272,6 +272,13 @@ and every booking needed its own routing rule, which, when wrong, gave access to
 
 ---
 
+> **Correction from the full lab (step 14, [lab-routeros.md §4](lab-routeros.md)):** the VRF input rule for the
+> tunnel gateway ping was `in-interface=vrf-s12 dst-address=10.250.0.1` without a source. Because the firewall
+> sees `vrf-s12` for traffic from the setup VLAN too, devices of the setup could ping the edge. The trial did
+> not test that path. Rules above now carry the setup's tunnel prefix (`src-address=10.250.12.0/24`).
+
+---
+
 ## 7. Consequences for the plan
 
 1. The RouterOS edge can follow every design. Nothing in the trial pushes towards PBR; in PBR (and hybrid)
@@ -284,5 +291,6 @@ and every booking needed its own routing rule, which, when wrong, gave access to
 4. Startup config for the RouterOS edge in the lab (stage 2): generate the per-setup commands (section 6) from `setups.yaml`.
 5. If PBR is chosen anyway: `action=lookup-only-in-table` for every rule, firewall as above, and the broker's
    reconcile loop compares rules (table!) with the bookings.
-6. Open: repeat with the **RouterOS version of the real MikroTik**; MTU/throughput only with a CHR licence
+6. Done in step 14: the full labs run with the MikroTik as edge in all three modes ([lab-routeros.md](lab-routeros.md)).
+7. Open: repeat with the **RouterOS version of the real MikroTik**; MTU/throughput only with a CHR licence
    (free licence: 1 Mbit/s per interface).

@@ -20,7 +20,7 @@ SETUPS = (12, 7)
 SSH = "sshpass -p lab ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 
-def test_e11_lab_enter_parallel_setups(lab, tunnel):
+def test_e11_lab_enter_parallel_setups(lab, tunnel, edge_impl):
     ws = lab["ws-power"]
     for s in SETUPS:
         tunnel("ws-power", BOB, s, netns=f"setup{s}")
@@ -32,8 +32,12 @@ def test_e11_lab_enter_parallel_setups(lab, tunnel):
     def enter(s, cmd, timeout=30):
         return ws.run(f"lab enter {s} -- {cmd}", check=False, timeout=timeout)
 
+    # The free RouterOS CHR licence caps every interface at 1 Mbit/s – both streams share the corporate
+    # side, so they are limited to 400 kbit/s each there (load, not a throughput measurement).
+    rate = " -b 400K" if edge_impl == "routeros" else ""
+
     def load(s):
-        r = enter(s, "iperf3 -c 192.168.1.20 -t 6 -J", timeout=40)
+        r = enter(s, f"iperf3 -c 192.168.1.20 -t 6 -J{rate}", timeout=40)
         return json.loads(r.stdout)["end"]["sum_received"]["bits_per_second"] if r.returncode == 0 else None
 
     def probe(s):
@@ -54,7 +58,8 @@ def test_e11_lab_enter_parallel_setups(lab, tunnel):
     write_protocol("E11", "Parallel setups with the same network (power user)", ok,
                    {"expected": expected, "answers": answers,
                     "iperf3_mbit_s": {s: round(b / 1e6) if b else None for s, b in bps.items()}},
-                   setup_notes="ws-power, namespaces setup12 + setup7, iperf3 in both while HTTP/SSH probes run",
+                   setup_notes="ws-power, namespaces setup12 + setup7, iperf3 in both while HTTP/SSH probes run"
+                               + (" (RouterOS free licence: 400 kbit/s per stream)" if rate else ""),
                    observations=f"lab list:\n{listing}")
     assert "setup12" in prompt, prompt
     assert all(f"{s} " in listing for s in SETUPS), listing

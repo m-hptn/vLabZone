@@ -5,7 +5,10 @@ set -euo pipefail
 LAB=${1:?usage: wait-ready.sh <lab> [timeout]}
 TIMEOUT=${2:-120}
 deadline=$((SECONDS + TIMEOUT))
-mapfile -t nodes < <(docker ps --filter "label=containerlab=$LAB" --format '{{.Names}}' | sort)
+# A RouterOS edge (kind mikrotik_ros) has no /run/vlab-ready: it is configured over REST
+# afterwards (drivers/edge_routeros.py configure), which waits for its API itself.
+mapfile -t nodes < <(docker ps --filter "label=containerlab=$LAB" --format '{{.Names}} {{.Label "clab-node-kind"}}' \
+                     | awk '$2 != "mikrotik_ros" {print $1}' | sort)
 (( ${#nodes[@]} )) || { echo "no running nodes for lab $LAB" >&2; exit 1; }
 
 pending=("${nodes[@]}")

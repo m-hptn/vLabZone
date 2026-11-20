@@ -125,13 +125,14 @@ FIREWALL = [
     ("input", {"in-interface": "ether1", "action": "accept", "comment": "vlab: management (lab: REST/SSH)"}),
     ("input", {"in-interface": "ether2", "protocol": "udp", "dst-port": "51800-52099", "action": "accept",
                "comment": "vlab: WireGuard from corporate"}),
-    *[("input", {"in-interface": f"vrf-s{sid}", "dst-address": "10.250.0.1", "protocol": "icmp",
+    # src prefix: in-interface=vrf-sN also matches the setup VLAN (found in the full lab, docs/lab-routeros.md §4)
+    *[("input", {"in-interface": f"vrf-s{sid}", "src-address": f"10.250.{sid}.0/24", "dst-address": "10.250.0.1", "protocol": "icmp",
                  "action": "accept", "comment": f"vlab: ping tunnel gateway s{sid}"}) for sid, _ in SETUPS],
     ("input", {"action": "drop", "comment": "vlab: input everything else"}),
     # forward: inside VRF N only tunnel -> setup, replies via connection tracking
     ("forward", {"connection-state": "established,related", "action": "accept"}),
     ("forward", {"connection-state": "invalid", "action": "drop"}),
-    *[("forward", {"in-interface": f"vrf-s{sid}", "src-address": "10.250.0.0/16", "dst-address": "192.168.1.0/24",
+    *[("forward", {"in-interface": f"vrf-s{sid}", "src-address": f"10.250.{sid}.0/24", "dst-address": "192.168.1.0/24",
                    "action": "accept", "comment": f"vlab: setup {sid}"}) for sid, _ in SETUPS],
     ("forward", {"action": "drop", "comment": "vlab: forward everything else"}),
 ]

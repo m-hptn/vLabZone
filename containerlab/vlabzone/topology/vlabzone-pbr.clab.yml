@@ -56,7 +56,7 @@ topology:
     broker:
       image: hwpool/broker:latest
       env:
-        EDGE_IMPL: ${EDGE_IMPL:=linux}
+        EDGE_IMPL: linux
         EDGE_MODE: pbr
     lab-agg:
       image: hwpool/router:latest

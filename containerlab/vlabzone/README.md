@@ -6,8 +6,8 @@ on a single Linux host. Background and experiments: [`../../idea.md`](../../idea
 implementation roadmap: [`../../PLAN.md`](../../PLAN.md).
 
 > **Status:** three labs, `vlabzone-vrf`, `vlabzone-pbr` and `vlabzone-hybrid`, one per edge mode, generated from
-> `config/setups.yaml`. All pass E01–E06, E09, E11, E13 and E20; E10 compares the modes. RouterOS trial (stage 1b)
-> done for all three designs: [docs/routeros-spike.md](docs/routeros-spike.md).
+> `config/setups.yaml`. All pass E01–E06, E09, E11, E13 and E20; E10 compares the modes. Each lab also runs with
+> the MikroTik (RouterOS CHR) as edge, `EDGE_IMPL=routeros` (E27, [docs/lab-routeros.md](docs/lab-routeros.md)).
 
 ---
 
@@ -151,6 +151,7 @@ make build           (re)build the images
 make build-routeros  build the RouterOS CHR image
 make smoke           2-node smoke lab (VLAN, VRF, WireGuard)
 make up | down | reset | inspect     lab of EDGE_MODE (vrf (default) | pbr | hybrid), e.g. make up EDGE_MODE=hybrid
+                                    EDGE_IMPL=routeros: same lab with the MikroTik as edge (vlabzone-<mode>-ros)
 make up-all | down-all | test-all    all labs (they can run side by side)
 make test            pytest suite against the lab of EDGE_MODE
 make test-stage1     only the experiments of one stage
@@ -219,6 +220,7 @@ containerlab/vlabzone/
 ├── Makefile, VERSION, .env.example, requirements.txt, pytest.ini
 ├── deploy/ansible/        site.yml, inventories, group_vars, roles/{preflight,host_prereqs,vlabzone,routeros_image,lab_deploy}
 ├── scripts/               preflight.sh, smoke.sh, wait-ready.sh, spike-routeros.py
+├── drivers/               edge_routeros.py – MikroTik edge over REST (configure + edge-ctl commands)
 ├── topology/              gen.py → vlabzone-{vrf,pbr,hybrid}.clab.yml, views/ (deployment, logical); smoke.clab.yml
 ├── images/                base + role images (router, edge, workspace, device, serial, mgmt, broker), routeros/build.sh
 ├── config/                setups.yaml (setups, VLANs, devices), corp-fw.nft, users.yaml

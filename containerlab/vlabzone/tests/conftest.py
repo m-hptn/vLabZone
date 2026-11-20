@@ -7,12 +7,14 @@ import pytest
 import yaml
 
 from tests.lib import labcfg, wg
-from tests.lib.node import Node
+from tests.lib.node import Node, RouterOSEdge
 
 ROOT = Path(__file__).resolve().parents[1]
-# One lab per edge mode (topology/gen.py): vlabzone-vrf, vlabzone-pbr, vlabzone-hybrid
+# One lab per edge mode and edge implementation (topology/gen.py):
+#   vlabzone-{vrf,pbr,hybrid} (Linux edge), vlabzone-{vrf,pbr,hybrid}-ros (MikroTik edge)
 EDGE_MODE = os.environ.get("EDGE_MODE", "vrf")
-LAB = f"vlabzone-{EDGE_MODE}"
+EDGE_IMPL = os.environ.get("EDGE_IMPL", "linux")
+LAB = f"vlabzone-{EDGE_MODE}" + ("-ros" if EDGE_IMPL == "routeros" else "")
 TOPOLOGY = yaml.safe_load((ROOT / "topology" / f"{LAB}.clab.yml").read_text())
 LAB_NODES = sorted(TOPOLOGY["topology"]["nodes"])
 
@@ -34,7 +36,7 @@ def _docker_available():
 
 @pytest.fixture(scope="session")
 def edge_impl() -> str:
-    return os.environ.get("EDGE_IMPL", "linux")
+    return EDGE_IMPL
 
 
 @pytest.fixture(scope="session")
@@ -52,10 +54,15 @@ def cfg() -> dict:
 def lab() -> dict[str, Node]:
     """All nodes of the deployed lab; skips the test if the lab is not up."""
     nodes = {name: Node(LAB, name) for name in LAB_NODES}
+    if EDGE_IMPL == "routeros":
+        nodes["lab-edge"] = RouterOSEdge(LAB, "lab-edge", mode=EDGE_MODE)
     missing = [n.container for n in nodes.values() if not n.is_running()]
     if missing:
-        pytest.skip(f"lab {LAB} not deployed (make up EDGE_MODE={EDGE_MODE}) – missing {', '.join(missing[:3])}")
-    not_ready = [n.name for n in nodes.values() if n.run("test -f /run/vlab-ready", check=False).returncode]
+        pytest.skip(f"lab {LAB} not deployed (make up EDGE_MODE={EDGE_MODE} EDGE_IMPL={EDGE_IMPL}) – "
+                    f"missing {', '.join(missing[:3])}")
+    not_ready = [n.name for n in nodes.values()
+                 if (not n.ready() if isinstance(n, RouterOSEdge)
+                     else n.run("test -f /run/vlab-ready", check=False).returncode)]
     if not_ready:
         pytest.fail(f"lab nodes not ready: {not_ready} (scripts/wait-ready.sh {LAB})")
     return nodes
@@ -103,7 +110,7 @@ def flush_arp(lab):
     def _flush(setup: int) -> None:
         vlan = next(s["vlan"] for s in labcfg.CFG["setups"] if s["id"] == setup)
         if EDGE_MODE != "pbr":
-            lab["lab-edge"].run(f"ip neigh flush dev eth2.{vlan}")
+            lab["lab-edge"].run(f"edge-ctl neigh flush --setup {setup}")
         else:
             lab[f"gw-{setup}"].run(f"ip neigh flush dev eth1.{vlan}")
     return _flush

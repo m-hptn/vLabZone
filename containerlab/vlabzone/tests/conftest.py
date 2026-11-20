@@ -16,7 +16,7 @@ LAB = f"vlabzone-{EDGE_MODE}"
 TOPOLOGY = yaml.safe_load((ROOT / "topology" / f"{LAB}.clab.yml").read_text())
 LAB_NODES = sorted(TOPOLOGY["topology"]["nodes"])
 
-# Test users (config/users.yaml): tunnel IP = 10.250.<user id>.<setup>
+# Test users (config/users.yaml): tunnel IP = 10.250.<setup>.<user id> (docs/tunnel-addresses.md)
 ALICE, BOB, CI = 1, 2, 3
 
 

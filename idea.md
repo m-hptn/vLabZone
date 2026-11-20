@@ -137,7 +137,7 @@ flowchart LR
 | Transfer Corporate → Lab-Edge | `10.20.99.0/30` | `corp-fw` .1, `lab-edge` .2 |
 | Transfer Corporate → Broker | `10.20.98.0/30` | `corp-fw` .1, `broker` .2 |
 | Lab-Management | `10.198.0.0/24` | `broker` .1, `lab-edge` .2, `lab-sw` .3 |
-| WireGuard-Tunnel | `10.250.0.0/16` | Edge `10.250.0.1`, Kontexte `10.250.<user>.<setup>` |
+| WireGuard-Tunnel | `10.250.0.0/16` | Edge `10.250.0.1`, Kontexte `10.250.<setup>.<user>` (bis 2026-11-20: `<user>.<setup>`; Begründung: `containerlab/vlabzone/docs/tunnel-addresses.md`) |
 | Lab-Transfer (nur PBR) | `10.199.0.0/24`, VLAN 199 | Edge .1, `gw-N` .N |
 | Alias-Netze | `10.200.0.0/16` | Setup N → `10.200.N.0/24` |
 | Setup 12 | `192.168.1.0/24`, VLAN 112 | Edge/GW .254, `dev-12-20` .20, `dev-12-21` .21, `acc-12-ser` .30 |

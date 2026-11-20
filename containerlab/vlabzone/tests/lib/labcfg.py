@@ -32,3 +32,12 @@ def device(name: str) -> dict:
 
 def switch_config(name: str, mode: str) -> list[tuple]:
     return vlab_cfg.switch_config(CFG, name, mode)
+
+
+def tunnel_ip(setup_id: int, user: int) -> str:
+    """10.250.<setup>.<user> (docs/tunnel-addresses.md)"""
+    return vlab_cfg.tunnel_ip(CFG, setup_id, user)
+
+
+def setup_prefix(setup_id: int) -> str:
+    return vlab_cfg.setup_prefix(CFG, setup_id)

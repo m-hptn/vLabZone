@@ -3,7 +3,9 @@
 #   wg0        all tunnels, UDP 51820, 10.250.0.1/16
 #   eth2.199   transfer VLAN 10.199.0.1/24 to the setup gateways gw-N (10.199.0.N)
 #   table 1000+N: default via gw-N
-#   per context (edge-ctl): ip rule from 10.250.U.N iif wg0 lookup 1000+N
+#   per context (edge-ctl): ip rule from 10.250.N.U iif wg0 lookup 1000+N
+#   (PBR keeps a rule per booking on purpose – it is the design being compared; with the
+#   setup-grouped addresses a static rule per setup would work here too, see docs/tunnel-addresses.md)
 #
 # The edge has no interface in any setup; it only decides – per tunnel source
 # address – which gateway a packet goes to. The gateways do the MASQUERADE.

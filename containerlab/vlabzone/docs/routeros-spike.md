@@ -2,23 +2,24 @@
 
 **Question:** can a MikroTik running RouterOS do what the Linux edge does in the two labs, in the **VRF design**
 (one VRF per setup with a WireGuard and a VLAN interface), in the **PBR design** (one WireGuard interface,
-a routing rule per booking, a gateway per setup) and in the **hybrid design** (one WireGuard interface, routing
-rules into setup VRFs on the router)? Overlapping setup networks, MASQUERADE, a firewall that only lets
+a routing rule per booking, a gateway per setup) and in the **hybrid design** (one WireGuard interface, one
+routing rule per setup into a setup VRF on the router)? Overlapping setup networks, MASQUERADE, a firewall that only lets
 "tunnel → own setup" through, and everything driven by the broker through the REST API?
 
 **Answer: yes, all three designs work**, with four things to know:
 - how firewall rules refer to interfaces inside a VRF (section 3),
 - the routing-rule action in PBR, which decides whether a missing setup route fails closed (section 5),
 - a stock RouterOS exposes its management, from the corporate side and, in PBR/hybrid, from the tunnels (section 4),
-- in the hybrid design the firewall can't tell the setups apart in the filter table, and can't match the last octet
-  of a tunnel address. Mangle marks solve the first; the second needs tunnel addresses grouped by setup (section 6).
+- in the hybrid design the filter table can't tell the setups apart by interface (mangle marks can), and RouterOS
+  can't match the last octet of an address. That is why tunnel addresses are now 10.250.\<setup\>.\<user\>
+  (section 6, [tunnel-addresses.md](tunnel-addresses.md)).
 
 | | |
 |---|---|
 | RouterOS | **7.24.6 (long-term)** as Cloud Hosted Router (CHR) in containerlab (`mikrotik_ros`, vrnetlab image). To be repeated with the version of the real MikroTik |
 | Labs | VRF: [`spike-routeros.clab.yml`](../topology/spike-routeros.clab.yml): `ws` → CHR → `sw` (trunk 112, 107) → `dev12`, `dev7` (both 192.168.1.20)<br>PBR: [`spike-routeros-pbr.clab.yml`](../topology/spike-routeros-pbr.clab.yml): `ws` → CHR → `sw` (trunk 199) → `gw-12`, `gw-7` (the Linux gateways of the PBR lab) → `dev12`, `dev7`<br>hybrid: [`spike-routeros-hybrid.clab.yml`](../topology/spike-routeros-hybrid.clab.yml): wired like the VRF trial, own lab so the CHR starts clean |
-| Script | [`scripts/spike-routeros.py`](../scripts/spike-routeros.py) `--mode vrf\|pbr\|hybrid`: configures the CHR via REST, runs the checks, writes `results/spike-routeros-<mode>-*.json`. Every run starts without filter rules |
-| Result | **VRF: 25 of 25, PBR: 25 of 25, hybrid: 26 of 26 checks pass**, each on a freshly booted CHR and again on an already configured one |
+| Script | [`scripts/spike-routeros.py`](../scripts/spike-routeros.py) `--mode vrf\|pbr\|hybrid`: configures the CHR via REST, runs the checks, writes `results/spike-routeros-<mode>-*.json`. Every run starts without filter rules. Tunnel addresses 10.250.\<setup\>.\<user\> (Alice in setup 12 = 10.250.12.1) |
+| Result | **VRF: 25 of 25, PBR: 25 of 25, hybrid: 23 of 23 checks pass** (tunnel addresses 10.250.\<setup\>.\<user\>), each on a freshly booted CHR and again on an already configured one |
 
 ```bash
 make build-routeros                 # once per host: CHR image via vrnetlab (needs /dev/kvm to run)
@@ -66,7 +67,7 @@ with 7 / 107 / 51807.
 /ip firewall nat add chain=srcnat out-interface=vlan112 action=masquerade
 
 # per booking (broker): one peer, /32 = cryptokey routing
-/interface wireguard peers add interface=wg-s12 public-key="<key>" allowed-address=10.250.1.12/32
+/interface wireguard peers add interface=wg-s12 public-key="<key>" allowed-address=10.250.12.1/32
 
 # edge firewall (section 3 + 4)
 /ip firewall filter
@@ -86,7 +87,7 @@ REST equivalents, as the broker would use them (HTTP basic auth):
 
 | Action | REST call |
 |---|---|
-| grant access | `PUT /rest/interface/wireguard/peers {"interface":"wg-s12","public-key":"…","allowed-address":"10.250.1.12/32"}` |
+| grant access | `PUT /rest/interface/wireguard/peers {"interface":"wg-s12","public-key":"…","allowed-address":"10.250.12.1/32"}` |
 | revoke | `DELETE /rest/interface/wireguard/peers/<.id>` |
 | reconcile | `GET /rest/interface/wireguard/peers`, `GET /rest/ip/firewall/filter` (check `invalid`) |
 
@@ -149,8 +150,8 @@ and API. The Linux edge drops everything there except WireGuard. For the real Mi
 /ip route add dst-address=0.0.0.0/0 gateway=10.199.0.12 routing-table=s12
 
 # per booking (broker): TWO changes
-/interface wireguard peers add interface=wg0 public-key="<key>" allowed-address=10.250.1.12/32
-/routing rule add src-address=10.250.1.12/32 interface=wg0 table=s12 action=lookup-only-in-table
+/interface wireguard peers add interface=wg0 public-key="<key>" allowed-address=10.250.12.1/32
+/routing rule add src-address=10.250.12.1/32 interface=wg0 table=s12 action=lookup-only-in-table
 
 /ip firewall filter
 add chain=input connection-state=established,related action=accept
@@ -166,7 +167,7 @@ add chain=forward action=drop
 ```
 
 REST for the broker: `PUT /rest/interface/wireguard/peers` **and** `PUT /rest/routing/rule`
-`{"src-address":"10.250.1.12/32","interface":"wg0","table":"s12","action":"lookup-only-in-table"}`; revoke deletes both.
+`{"src-address":"10.250.12.1/32","interface":"wg0","table":"s12","action":"lookup-only-in-table"}`; revoke deletes both.
 
 **Results**
 
@@ -199,8 +200,9 @@ per-booking rules would make Linux fail closed without relying on the firewall.
 
 ## 6. Hybrid design on RouterOS
 
-One `wg0` in `main` (one port, as PBR), the setups as VRFs on the router (as VRF), routing rules from the
-tunnel address into the VRF's table. The Linux counterpart is the lab `vlabzone-hybrid` ([lab-hybrid.md](lab-hybrid.md)).
+One `wg0` in `main` (one port, as PBR), the setups as VRFs on the router (as VRF), and **one static routing rule
+per setup** from the setup's tunnel prefix into the VRF's table. A booking is only the WireGuard peer. The
+Linux counterpart is the lab `vlabzone-hybrid` ([lab-hybrid.md](lab-hybrid.md)).
 
 **Configuration** (equivalent CLI)
 
@@ -208,18 +210,22 @@ tunnel address into the VRF's table. The Linux counterpart is the lab `vlabzone-
 /ip address add address=10.20.10.1/24 interface=ether2
 /interface wireguard add name=wg0 listen-port=51820                    # one port for every setup
 /ip address add address=10.250.0.1/16 interface=wg0
+
+# per setup (12 shown): VRF with only the VLAN, NAT, way back to the tunnels, the setup rule
 /interface vlan add name=vlan112 vlan-id=112 interface=ether3
-/ip vrf add name=vrf-s12 interfaces=vlan112                            # only the VLAN, not the WireGuard
+/ip vrf add name=vrf-s12 interfaces=vlan112
 /ip address add address=192.168.1.254/24 interface=vlan112
 /ip firewall nat add chain=srcnat out-interface=vlan112 action=masquerade
-/ip route add dst-address=10.250.0.0/16 gateway=wg0@main routing-table=vrf-s12   # way back to the tunnels
-
-# per booking (broker): TWO changes
-/interface wireguard peers add interface=wg0 public-key="<key>" allowed-address=10.250.1.12/32
-/routing rule add src-address=10.250.1.12/32 interface=wg0 table=vrf-s12 action=lookup-only-in-table
-
-# firewall: the setup can only be identified through a mangle mark (see findings)
+/ip route add dst-address=10.250.0.0/16 gateway=wg0@main routing-table=vrf-s12
+/routing rule add src-address=10.250.12.0/24 interface=wg0 table=vrf-s12 action=lookup-only-in-table
 /ip firewall mangle add chain=forward out-interface=vlan112 action=mark-packet new-packet-mark=to-s12 passthrough=yes
+/ip firewall filter add chain=forward in-interface=wg0 packet-mark=to-s12 src-address=10.250.12.0/24 action=accept \
+    place-before=<the final forward drop>
+
+# per booking (broker): ONE change
+/interface wireguard peers add interface=wg0 public-key="<key>" allowed-address=10.250.12.1/32
+
+# rest of the firewall
 /ip firewall filter
 add chain=input connection-state=established,related action=accept
 add chain=input connection-state=invalid action=drop
@@ -229,22 +235,25 @@ add chain=input in-interface=wg0 dst-address=10.250.0.1 protocol=icmp action=acc
 add chain=input action=drop
 add chain=forward connection-state=established,related action=accept
 add chain=forward connection-state=invalid action=drop
-add chain=forward in-interface=wg0 packet-mark=to-s12 action=accept    # + src-address=10.250.12.0/24, see variant
 add chain=forward action=drop
 ```
+
+REST for the broker: `PUT /rest/interface/wireguard/peers` `{"interface":"wg0","public-key":"…","allowed-address":"10.250.12.1/32"}`;
+revoke deletes it.
 
 **Results**
 
 | Check | Result |
 |---|---|
 | Route back `10.250.0.0/16 gateway=wg0@main` in each VRF table | active. Right after `/ip vrf add`, REST rejects `routing-table=vrf-sN` as unknown for a moment: the VRF's table appears asynchronously, the script waits for it |
-| Booking = peer + routing rule into `vrf-s12` | 2 changes per booking |
-| Setup 12 and setup 7 over one port, same IP 192.168.1.20 | each reaches its own device; MASQUERADE in the VRF works (devices see .254) |
-| Spoofed source | dropped (cryptokey routing) |
-| Routing rule missing | **fail-closed** |
-| Routing rule points to the wrong VRF (no firewall, and with the firewall above) | **access to the foreign setup**, as in PBR |
+| Booking = one peer | **1 change per booking**; the setup's rule is static |
+| Setup 12 (10.250.12.1) and setup 7 (10.250.7.1) over one port, same IP 192.168.1.20 | each reaches its own device; MASQUERADE in the VRF works (devices see .254) |
+| Spoofing | a setup-12 key sending from another setup-12 address or from a setup-7 address: dropped (cryptokey routing) |
+| Setup rule missing | **fail-closed** |
+| Setup rule points to the wrong VRF, **no firewall** | leads into setup 7: what the firewall has to stop |
+| Same mistake **with the firewall** | **fail-closed**: only 10.250.7.0/24 may enter setup 7 |
 | Edge services from a tunnel, no filter | **reachable** (SSH/HTTP on 10.250.0.1 and 10.20.10.1), as in PBR: `wg0` is in `main` |
-| With firewall | services closed, setups work through their forward rules, setup 12 reaches neither tunnels, corporate net nor edge |
+| With firewall | services closed, setups work through their forward rules, setup 12 reaches neither tunnels, corporate net nor edge; revoke ends access, setup 7 unaffected |
 
 **Findings: how the firewall sees traffic from `wg0` into a VRF**
 
@@ -254,34 +263,12 @@ add chain=forward action=drop
 | filter `out-interface=vrf-s12` | valid | **never** (0 packets) |
 | filter `in-interface=wg0` / `dst-address=192.168.1.0/24` | valid | yes, but these don't tell the setups apart |
 | **mangle** forward `out-interface=vlan112` | valid | **yes**: mark the packet per setup there, filter on `packet-mark` |
-| `src-address=10.250.0.12/255.255.0.255` (last octet) | accepted, but RouterOS turns it into the **range** 10.250.0.12–10.250.255.12 | not a last-octet match |
+| `src-address=10.250.0.12/255.255.0.255` (setup in the last octet, the old address layout) | accepted, but RouterOS turns it into the **range** 10.250.0.12–10.250.255.12 | not a last-octet match |
 
-So the Linux safeguard of the hybrid lab (tunnel address `10.250.<user>.N` may only enter setup N) **can't be
-written on RouterOS** with the current address scheme.
-
-**Variant: tunnel addresses 10.250.\<setup\>.\<user\>**
-
-With the setup in the third octet, each setup is a prefix (`10.250.12.0/24`), and RouterOS can match it:
-
-```routeros
-# once per setup – no routing rule per booking any more
-/routing rule add src-address=10.250.12.0/24 interface=wg0 table=vrf-s12 action=lookup-only-in-table
-/ip firewall filter add chain=forward in-interface=wg0 packet-mark=to-s12 src-address=10.250.12.0/24 action=accept
-
-# per booking: ONE change
-/interface wireguard peers add interface=wg0 public-key="<key>" allowed-address=10.250.12.1/32
-```
-
-| Check | Result |
-|---|---|
-| Changes per booking | **1** (only the peer), as in VRF |
-| Setups 12 and 7 via the static prefix rules | both reachable |
-| Static rule pointing to the wrong VRF | **fail-closed**: dropped by the prefix firewall rule |
-| A setup-12 key sending from a setup-7 address | dropped (cryptokey routing) |
-| Revoke (delete the peer) | access ends, setup 7 unaffected |
-
-What remains per booking is the peer's `allowed-address`: a peer registered with an address from the wrong
-setup's prefix leads into that setup. In the VRF design the same mistake is the peer on the wrong `wg-sN`.
+The last finding decided the address layout. With 10.250.\<user\>.\<setup\> (the first hybrid trial),
+RouterOS could neither group a setup's bookings into one rule nor check that a rule leads to the right setup,
+and every booking needed its own routing rule, which, when wrong, gave access to setup 7. With
+10.250.\<setup\>.\<user\> both are plain prefixes. Details: [tunnel-addresses.md](tunnel-addresses.md).
 
 ---
 
@@ -289,12 +276,12 @@ setup's prefix leads into that setup. In the VRF design the same mistake is the 
 
 1. The RouterOS edge can follow every design. Nothing in the trial pushes towards PBR; in PBR (and hybrid)
    the tunnels see the router's own services in `main`, so the input filter is mandatory.
-2. If the corporate firewall allows only **one port**: hybrid with tunnel addresses grouped by setup
-   (10.250.\<setup\>.\<user\>): one port, setups in VRFs, one change per booking, and a wrong setup rule fails
-   closed on Linux and RouterOS. Otherwise VRF ([vrf-vs-pbr.md](vrf-vs-pbr.md)).
-3. The broker driver `edge_routeros.py` (stage 3) uses the REST API as shown in section 2. It must
+2. With the one-port constraint the design is **hybrid** with tunnel addresses 10.250.\<setup\>.\<user\>:
+   one port, setups in VRFs, one change per booking, and a wrong setup rule fails closed on Linux and RouterOS
+   ([vrf-vs-pbr.md](vrf-vs-pbr.md)).
+3. The broker driver `edge_routeros.py` (stage 3) uses the REST API as shown in sections 2 and 6. It must
    wait for or verify rule activation, and check `invalid` flags during reconcile.
-4. Startup config for the RouterOS edge in the lab (stage 2): generate the commands of section 2 from `setups.yaml`.
+4. Startup config for the RouterOS edge in the lab (stage 2): generate the per-setup commands (section 6) from `setups.yaml`.
 5. If PBR is chosen anyway: `action=lookup-only-in-table` for every rule, firewall as above, and the broker's
    reconcile loop compares rules (table!) with the bookings.
 6. Open: repeat with the **RouterOS version of the real MikroTik**; MTU/throughput only with a CHR licence

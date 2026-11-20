@@ -4,17 +4,18 @@
 #   vrf-sN     per setup: VRF with table 1000+N
 #   eth2.V     per setup: VLAN subinterface in vrf-sN, gateway IP 192.168.1.254, MASQUERADE
 #   table 1000+N also holds 10.250.0.0/16 dev wg0 (route leak back to the tunnels)
-#   per booking (edge-ctl): ip rule from 10.250.U.N iif wg0 lookup 1000+N
+#   per setup: ip rule from 10.250.N.0/24 iif wg0 lookup 1000+N (static)
+#   per booking (edge-ctl): only the WireGuard peer, allowed-ips 10.250.N.U/32
 #
-# Like PBR, a per-booking ip rule decides which setup a tunnel reaches – one port for the
-# corporate firewall. Like VRF, the setups live in VRFs on the edge itself – no gateways.
+# Tunnel addresses are 10.250.<setup>.<user> (docs/tunnel-addresses.md): every setup is a
+# prefix. So the rule that selects the setup is written once per setup, like the VRF itself –
+# one port for the corporate firewall (as PBR), setups in VRFs on the edge (as VRF).
 #
-# Two safeguards against a wrong or missing rule (both written once, never per booking):
+# Two safeguards against a wrong or missing setup rule (both written once):
 #   1. ip rule iif wg0 unreachable (pref 30000): a lookup that finds nothing in a setup
 #      table ends here instead of falling through to the main table (corporate routes).
-#   2. forward rule per setup: a tunnel may only enter VLAN V if the last octet of its
-#      tunnel address is N (scheme 10.250.<user>.<setup>). A rule pointing to the wrong
-#      table is dropped instead of leading into a foreign setup.
+#   2. forward rule per setup: only 10.250.N.0/24 may enter VLAN V of setup N. A setup
+#      rule pointing to the wrong table is dropped instead of leading into a foreign setup.
 # shellcheck shell=bash
 
 PORT=$(vlab-cfg get edge.wg_port_pbr)
@@ -53,7 +54,7 @@ table inet edge {
     jump setups
     counter comment "dropped forward"
   }
-  # Safeguard 2, one rule per setup: tunnel 10.250.x.N -> VLAN of setup N only
+  # Safeguard 2, one rule per setup: tunnels 10.250.N.0/24 -> VLAN of setup N only
   chain setups { }
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
@@ -75,11 +76,14 @@ while read -r id vlan net gw; do
   # replies from the setup go back to the tunnels (wg0 is outside the VRF)
   ip route add "$TUN_NET" dev wg0 table "$table"
 
-  nft add rule inet edge setups iifname wg0 oifname "$vif" ip saddr \& 0.0.0.255 == "0.0.0.$id" accept
+  prefix_n=$(vlab-cfg setup-prefix "$id")
+  # the rule that selects the setup – static, the bookings only add peers inside this prefix
+  ip rule add from "$prefix_n" iif wg0 lookup "$table" pref 10000
+  nft add rule inet edge setups iifname wg0 oifname "$vif" ip saddr "$prefix_n" accept
   nft add chain inet edge "nat-s$id"
   nft add rule inet edge nat-setups jump "nat-s$id"
   nft add rule inet edge "nat-s$id" oifname "$vif" masquerade
 
-  log "setup $id: $vrf (table $table), $vif ($gw/$prefix)"
+  log "setup $id: $vrf (table $table), $vif ($gw/$prefix), tunnels $prefix_n"
 done < <(vlab-cfg setups)
-log "wg0 on UDP $PORT, booking rules: ip rule from 10.250.U.N iif wg0 lookup 1000+N"
+log "wg0 on UDP $PORT"

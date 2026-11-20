@@ -43,11 +43,46 @@ def test_e10_config_steps_per_booking(lab, tunnel, edge_mode):
 
     write_protocol("E10-steps", "Configuration steps per booking", True,
                    {"mode": edge_mode, "changed_objects": delta, "steps": steps},
-                   observations="VRF: one WireGuard peer. PBR and hybrid: WireGuard peer + ip rule.")
-    assert steps == (1 if edge_mode == "vrf" else 2), delta
+                   observations="VRF and hybrid: one WireGuard peer (hybrid: the setup's rule is static, "
+                                "10.250.<setup>.0/24). PBR: WireGuard peer + ip rule.")
+    assert steps == (2 if edge_mode == "pbr" else 1), delta
 
 
 # --- all modes ---------------------------------------------------------------------
+
+def test_e10_edge_ctl_refuses_address_of_another_setup(lab):
+    """The setup is part of the tunnel address (10.250.<setup>.<user>). edge-ctl refuses a
+    registration whose address lies outside the setup's prefix, so the broker can't register
+    a setup-12 booking with a setup-7 address by mistake."""
+    edge = lab["lab-edge"]
+    key = lab["ws-std"].run("wg genkey | wg pubkey").stdout.strip()
+    attempts = {ip: edge.run(f"edge-ctl peer add --setup 12 --pubkey {key} --ip {ip}", check=False)
+                for ip in (tunnel_ip(ALICE, 7), "10.250.12.0", "10.250.12.255", "10.250.1.12")}
+    refused = {ip: r.returncode != 0 for ip, r in attempts.items()}
+    peers = edge.run("edge-ctl peer list").stdout
+    write_protocol("E10-address-check", "edge-ctl refuses addresses outside the setup prefix", all(refused.values()),
+                   {"refused": refused, "message": attempts[tunnel_ip(ALICE, 7)].stderr.strip()})
+    assert all(refused.values()), refused
+    assert key not in peers
+
+
+def test_e10_peer_on_wrong_setup_fails_closed(lab, tunnel, edge_mode):
+    """The broker registers Alice's key on setup 7 (address 10.250.7.1), but her agent connects to
+    setup 12 with 10.250.12.1. VRF: the key is unknown on wg-s12. PBR/hybrid: the key may only send
+    from 10.250.7.1, her packets from 10.250.12.1 are dropped (cryptokey routing)."""
+    edge = lab["lab-edge"]
+    t = tunnel("ws-std", ALICE, 12, register=False)
+    edge.run(f"edge-ctl peer add --setup 7 --pubkey {t.pubkey} --ip {tunnel_ip(ALICE, 7)}")
+    try:
+        answer = ident(t.curl("http://192.168.1.20", timeout=3))
+    finally:
+        edge.run(f"edge-ctl peer del --setup 7 --pubkey {t.pubkey}")
+
+    write_protocol(f"E10-{edge_mode}-wrong-peer", f"{edge_mode}: peer registered on the wrong setup", answer is None,
+                   {"answer": answer},
+                   consequence="a booking registered on the wrong setup fails closed in every mode")
+    assert answer is None
+
 
 def test_e10_setup_cannot_reach_foreign_tunnels(lab, tunnel):
     """A device of setup 12 (edge as gateway) cannot reach a workspace booked into setup 7.
@@ -65,12 +100,13 @@ def test_e10_setup_cannot_reach_foreign_tunnels(lab, tunnel):
     assert not reached
 
 
-# --- PBR and hybrid: one ip rule per booking ----------------------------------------
+# --- PBR and hybrid: an ip rule selects the setup ------------------------------------
+# PBR: one rule per booking (from 10.250.12.1). Hybrid: one static rule per setup (from 10.250.12.0/24).
 
 @pytest.fixture
 def rules_mode(edge_mode):
     if edge_mode == "vrf":
-        pytest.skip("per-booking ip rules only exist in PBR and hybrid mode")
+        pytest.skip("ip rules only select the setup in PBR and hybrid mode")
 
 
 @pytest.fixture
@@ -85,22 +121,29 @@ def hybrid_only(edge_mode):
         pytest.skip("hybrid misconfiguration – run with EDGE_MODE=hybrid")
 
 
-def set_rule(edge, table: int) -> None:
-    edge.run(f"ip rule del from {ALICE_IP} iif wg0; ip rule add from {ALICE_IP} iif wg0 lookup {table} pref 10000")
+def rule_src(edge_mode: str) -> str:
+    """The source the setup-12 rule matches: Alice's address (PBR) or setup 12's prefix (hybrid)."""
+    return ALICE_IP if edge_mode == "pbr" else labcfg.setup_prefix(12)
+
+
+def set_rule(edge, src: str, table: int) -> None:
+    edge.run(f"ip rule del from {src} iif wg0; ip rule add from {src} iif wg0 lookup {table} pref 10000")
 
 
 def test_e10_rule_missing_fails_closed(lab, tunnel, rules_mode, edge_mode):
     edge = lab["lab-edge"]
+    src = rule_src(edge_mode)
     t = tunnel("ws-std", ALICE, 12)
     assert in_setup(ident(t.curl("http://192.168.1.20")), 12)
 
-    edge.run(f"ip rule del from {ALICE_IP} iif wg0")
+    edge.run(f"ip rule del from {src} iif wg0")
     try:
         answer = ident(t.curl("http://192.168.1.20", timeout=3))
     finally:
-        edge.run(f"ip rule add from {ALICE_IP} iif wg0 lookup 1012 pref 10000")
+        edge.run(f"ip rule add from {src} iif wg0 lookup 1012 pref 10000")
 
-    write_protocol(f"E10-{edge_mode}-missing-rule", f"{edge_mode}: ip rule missing", answer is None, {"answer": answer},
+    write_protocol(f"E10-{edge_mode}-missing-rule", f"{edge_mode}: ip rule missing ({src})", answer is None,
+                   {"answer": answer},
                    observations="without a rule the catch-all `iif wg0 unreachable` (pref 30000) applies",
                    consequence="missing rule = no access (fail-closed)")
     assert answer is None, f"access without ip rule: {answer}"
@@ -110,13 +153,14 @@ def test_e10_rule_without_route_never_reaches_main(lab, tunnel, rules_mode, edge
     """A rule into a table without a route (setup removed, typo) must not fall through to the
     main table – that holds the corporate routes (RouterOS trial: `action=lookup` leaked there)."""
     edge = lab["lab-edge"]
+    src = rule_src(edge_mode)
     tunnel("ws-std", ALICE, 12)
     probe = f"ip route get 10.20.20.10 from {ALICE_IP} iif wg0"
-    set_rule(edge, 1099)                       # table without any route
+    set_rule(edge, src, 1099)                  # table without any route
     try:
         no_route = edge.run(probe, check=False)
     finally:
-        set_rule(edge, 1012)
+        set_rule(edge, src, 1012)
     ok_route = edge.run(probe, check=False)
     result = (no_route.stdout + no_route.stderr).strip()
     write_protocol(f"E10-{edge_mode}-empty-table", f"{edge_mode}: rule into a table without route",
@@ -129,11 +173,11 @@ def test_e10_pbr_wrong_table_reaches_wrong_setup(lab, tunnel, pbr_only):
     edge = lab["lab-edge"]
     t = tunnel("ws-std", ALICE, 12)
 
-    edge.run(f"ip rule del from {ALICE_IP} iif wg0 && ip rule add from {ALICE_IP} iif wg0 lookup 1007 pref 10000")
+    set_rule(edge, ALICE_IP, 1007)
     try:
         answer = ident(t.curl("http://192.168.1.20", timeout=3))
     finally:
-        edge.run(f"ip rule del from {ALICE_IP} iif wg0 && ip rule add from {ALICE_IP} iif wg0 lookup 1012 pref 10000")
+        set_rule(edge, ALICE_IP, 1012)
 
     write_protocol("E10-pbr-wrong-table", "PBR: ip rule points to the wrong table", True, {"answer": answer},
                    observations="Alice booked setup 12 but lands in setup 7 (same system switch) – nothing else stops it",
@@ -142,11 +186,13 @@ def test_e10_pbr_wrong_table_reaches_wrong_setup(lab, tunnel, pbr_only):
 
 
 def test_e10_hybrid_wrong_table_fails_closed(lab, tunnel, hybrid_only):
-    """Same mistake as in PBR. The per-setup forward rule (tunnel IP 10.250.x.N may only enter
-    setup N's VLAN) drops it. Control: without that rule the mistake leads into setup 7."""
+    """Setup 12's static rule points to setup 7's table. The per-setup forward rule (only
+    10.250.12.0/24 may enter setup 12's VLAN, only 10.250.7.0/24 setup 7's) drops it.
+    Control: without that rule the mistake leads into setup 7."""
     edge = lab["lab-edge"]
+    src = labcfg.setup_prefix(12)
     t = tunnel("ws-std", ALICE, 12)
-    set_rule(edge, 1007)
+    set_rule(edge, src, 1007)
     permissive = None
     try:
         guarded = ident(t.curl("http://192.168.1.20", timeout=3))
@@ -157,13 +203,13 @@ def test_e10_hybrid_wrong_table_fails_closed(lab, tunnel, hybrid_only):
         handle = edge.run("nft -a list chain inet edge setups | awk '/e10-control/ {print $NF}'").stdout.strip()
         if handle:
             edge.run(f"nft delete rule inet edge setups handle {handle}")
-        set_rule(edge, 1012)
+        set_rule(edge, src, 1012)
     restored = ident(t.curl("http://192.168.1.20"))
-    write_protocol("E10-hybrid-wrong-table", "hybrid: ip rule points to the wrong table", guarded is None,
+    write_protocol("E10-hybrid-wrong-table", "hybrid: setup rule points to the wrong table", guarded is None,
                    {"with_safeguard": guarded, "without_safeguard": permissive, "restored": restored},
-                   observations="the per-setup forward rule matches the setup number in the tunnel address",
-                   consequence="a wrong per-booking rule fails closed; only a wrong tunnel ADDRESS (consistent "
-                               "with the rule) would still lead into a foreign setup")
+                   observations="the per-setup forward rule matches the setup prefix of the tunnel address",
+                   consequence="a wrong setup rule fails closed; only a booking registered with an address of "
+                               "another setup AND used by the agent would lead into that setup")
     assert guarded is None, f"wrong table reached a setup despite the safeguard: {guarded}"
     assert in_setup(permissive, 7), f"control: expected setup 7 without the safeguard, got {permissive}"
     assert in_setup(restored, 12), restored
@@ -194,23 +240,6 @@ def test_e10_pbr_gateways_isolated(lab, tunnel, pbr_only):
 def vrf_only(edge_mode):
     if edge_mode != "vrf":
         pytest.skip("VRF misconfiguration – run with EDGE_MODE=vrf")
-
-
-def test_e10_vrf_peer_on_wrong_setup_fails_closed(lab, tunnel, vrf_only):
-    """The broker registers Alice's key on setup 7, but her agent connects to setup 12."""
-    edge = lab["lab-edge"]
-    t = tunnel("ws-std", ALICE, 12, register=False)
-    edge.run(f"edge-ctl peer add --setup 7 --pubkey {t.pubkey} --ip {ALICE_IP}")
-    try:
-        answer = ident(t.curl("http://192.168.1.20", timeout=3))
-    finally:
-        edge.run(f"edge-ctl peer del --setup 7 --pubkey {t.pubkey}")
-
-    write_protocol("E10-vrf-wrong-peer", "VRF: peer registered on the wrong setup", answer is None,
-                   {"answer": answer},
-                   observations="the key is unknown on wg-s12, so the handshake fails",
-                   consequence="per-booking mistakes in VRF mode fail closed")
-    assert answer is None
 
 
 def test_e10_vrf_missing_forward_rule_fails_closed(lab, tunnel, vrf_only):

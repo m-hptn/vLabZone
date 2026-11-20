@@ -181,12 +181,12 @@ L=vrf                                               # or pbr / hybrid – the co
 E() { docker exec clab-vlabzone-$L-lab-edge "$@"; }  # works in bash and zsh
 W() { docker exec clab-vlabzone-$L-ws-std "$@"; }
 PUB=$(W sh -c 'umask 077; wg genkey > /run/vlab/k && wg pubkey < /run/vlab/k')
-E edge-ctl peer add --setup 12 --pubkey "$PUB" --ip 10.250.1.12
+E edge-ctl peer add --setup 12 --pubkey "$PUB" --ip 10.250.12.1   # 10.250.<setup>.<user>, docs/tunnel-addresses.md
 W sh -c "ip link add wg-s12 type wireguard &&
   wg set wg-s12 private-key /run/vlab/k peer $(E edge-ctl pubkey --setup 12) \
      endpoint 10.20.99.2:$(E edge-ctl port --setup 12) allowed-ips 0.0.0.0/0 &&
-  ip addr add 10.250.1.12/32 dev wg-s12 && ip link set wg-s12 up &&
-  ip route add 192.168.1.0/24 dev wg-s12 src 10.250.1.12"
+  ip addr add 10.250.12.1/32 dev wg-s12 && ip link set wg-s12 up &&
+  ip route add 192.168.1.0/24 dev wg-s12 src 10.250.12.1"
 W curl -s http://192.168.1.20    # {"switch": "sys1", "device": "sys1-dev1", ..., "peer": "192.168.1.254"}
 
 # clean up

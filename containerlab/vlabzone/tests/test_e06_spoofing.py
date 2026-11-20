@@ -15,7 +15,7 @@ pytestmark = pytest.mark.stage1
 
 def test_e06_spoofed_tunnel_ip(lab, tunnel):
     bob = tunnel("ws-power", BOB, 12)
-    # Alice's key is registered for 10.250.1.12, but she sends as Bob (10.250.2.12)
+    # Alice's key is registered for 10.250.12.1, but she sends as Bob (10.250.12.2)
     alice = tunnel("ws-std", ALICE, 12, ip=tunnel_ip(BOB, 12))
 
     spoofed = ident(alice.curl("http://192.168.1.20", timeout=3))

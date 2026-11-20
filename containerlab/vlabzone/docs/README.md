@@ -41,6 +41,7 @@ a different layout:
 | [lab-pbr.md](lab-pbr.md) | PBR lab: overview, addresses, one request hop by hop, the PBR edge, setup gateways, switch, what carries over |
 | [lab-hybrid.md](lab-hybrid.md) | hybrid lab: why it exists, one request, the hybrid edge and its two safeguards, what can go wrong, what carries over |
 | [common.md](common.md) | nodes that are identical in all labs: corporate firewall, workspaces, broker, switches (aggregation + system switches, inventory and grouping), devices, management, settings for all nodes |
+| [tunnel-addresses.md](tunnel-addresses.md) | the tunnel address layout 10.250.\<setup\>.\<user\>: why the setup comes first (one port, static per-setup rules, RouterOS can only match prefixes), limits, where it is used |
 | [vrf-vs-pbr.md](vrf-vs-pbr.md) | comparison of the three modes: test results (E10), RouterOS, advantages, recommendation |
 | [routeros-spike.md](routeros-spike.md) | stage 1b: MikroTik CHR as VRF, PBR and hybrid edge – results, RouterOS configuration, firewall findings |
 

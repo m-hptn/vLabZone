@@ -8,6 +8,8 @@
                                        access <port> <vlan|none> <device>
                                      depends on EDGE_MODE (vrf | pbr | hybrid)
   vlab-cfg gw-ip <id>             -> transfer address of gw-<id> (PBR mode)
+  vlab-cfg setup-prefix <id>      -> tunnel prefix of setup <id>: 10.250.<id>.0/24
+  vlab-cfg tunnel-ip <id> <user>  -> tunnel address of <user> in setup <id>: 10.250.<id>.<user>
   vlab-cfg get edge.wg_port_base  -> scalar value
   vlab-cfg setup <id> <key>       -> value of one setup field
 
@@ -60,6 +62,23 @@ def device_at(cfg: dict, setup_id: int, ip: str) -> str:
     return hits[0]
 
 
+# Tunnel addresses: 10.250.<setup>.<user> (docs/tunnel-addresses.md). Every setup owns a /24
+# inside edge.tunnel_net, so routing rules and firewall rules can match a setup by prefix.
+def setup_prefix(cfg: dict, sid) -> str:
+    sid = int(sid)
+    if not 1 <= sid <= 255:
+        raise ValueError(f"setup id {sid} outside 1-255 (third octet of the tunnel address)")
+    net = ipaddress.ip_network(cfg["edge"]["tunnel_net"])
+    return str(ipaddress.ip_network((int(net.network_address) + (sid << 8), 24)))
+
+
+def tunnel_ip(cfg: dict, sid, user) -> str:
+    user = int(user)
+    if not 1 <= user <= 254:
+        raise ValueError(f"user id {user} outside 1-254 (last octet of the tunnel address)")
+    return str(ipaddress.ip_network(setup_prefix(cfg, sid)).network_address + user)
+
+
 def gw_ip(cfg: dict, sid) -> str:
     return str(ipaddress.ip_network(cfg["edge"]["transfer"]["net"]).network_address + int(sid))
 
@@ -110,6 +129,10 @@ def main(argv: list[str]) -> None:
                 print("access", port, vlan if vlan else "none", dev)
     elif cmd == "gw-ip":
         print(gw_ip(cfg, argv[2]))
+    elif cmd == "setup-prefix":
+        print(setup_prefix(cfg, argv[2]))
+    elif cmd == "tunnel-ip":
+        print(tunnel_ip(cfg, argv[2], argv[3]))
     elif cmd == "get":
         val = cfg
         for part in argv[2].split("."):

@@ -85,11 +85,13 @@ the agent will, and they are **identical in all labs**. The workspace asks the e
 | Interface `wg-s<setup>`, endpoint `10.20.99.2:<port from edge-ctl>` | VRF lab: 51800 + setup. PBR and hybrid lab: 51820 for every setup |
 | `allowed-ips 0.0.0.0/0` on the workspace side | the routes decide what enters the tunnel; the edge enforces what is allowed |
 | `persistent-keepalive 25` | keeps the corporate firewall's UDP state alive so the lab can still reply after idle periods (E16) |
-| Address `10.250.<user>.<setup>/32`, route `192.168.1.0/24 dev wg-s12 src 10.250.1.12` | desktop mode: the setup network is reached at its original addresses |
+| Address `10.250.<setup>.<user>/32` ([tunnel-addresses.md](tunnel-addresses.md)), route `192.168.1.0/24 dev wg-s12 src 10.250.12.1` | desktop mode: the setup network is reached at its original addresses |
 | **Power mode:** create the interface in the main namespace, then move it into namespace `setupN` | the encrypted socket stays outside (it needs corp-fw), and the decrypted interface exists only inside the namespace. Inside, there is no route to the corporate network at all, so several setups with the same network can be used side by side (E09, E11) |
 
-The tunnel address encodes user and setup (`10.250.1.12` = Alice, user 1, in setup 12). In the VRF lab it
-makes contexts readable in logs. In the PBR lab it is also what the edge routes on.
+The tunnel address encodes setup and user: **10.250.\<setup\>.\<user\>** (`10.250.12.1` = Alice, user 1, in
+setup 12), so every setup owns the prefix `10.250.<setup>.0/24`. In the VRF lab it makes contexts readable in
+logs. In the PBR lab the edge routes on it per booking, in the hybrid lab per setup prefix. Why the setup comes
+first: [tunnel-addresses.md](tunnel-addresses.md). `edge-ctl peer add` refuses an address outside the setup's prefix.
 
 ```bash
 docker exec clab-vlabzone-$L-ws-std wg show

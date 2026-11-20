@@ -4,12 +4,15 @@
 # Same commands in all edge modes; what they change differs:
 #
 #                     VRF mode               PBR mode                      hybrid mode
-#   peer add          wg peer on wg-sN       wg peer on wg0 + ip rule      wg peer on wg0 + ip rule
-#   peer del          remove peer            remove peer + ip rule         remove peer + ip rule
+#   peer add          wg peer on wg-sN       wg peer on wg0 + ip rule      wg peer on wg0 (the setup's
+#   peer del          remove peer            remove peer + ip rule         remove peer   rule is static)
 #   pubkey/port       of wg-sN               of wg0 (same for all setups)  of wg0
 #   nat on|off        on the edge            on gw-N (gw-ctl nat)          on the edge
 #
-#   edge-ctl peer add  --setup N --pubkey KEY --ip 10.250.U.N   grant access
+# Tunnel addresses: 10.250.<setup>.<user> (docs/tunnel-addresses.md). `peer add` refuses an
+# address outside the setup's prefix 10.250.N.0/24 – in every mode.
+#
+#   edge-ctl peer add  --setup N --pubkey KEY --ip 10.250.N.U   grant access
 #   edge-ctl peer del  --setup N --pubkey KEY                   revoke access
 #   edge-ctl peer list [--setup N]                              setup pubkey ip handshake rx tx
 #   edge-ctl pubkey --setup N                                   public key the workspace must use
@@ -40,11 +43,11 @@ need_setup() {
 valid_key() { [[ "$PUBKEY" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$ ]] || die "invalid public key"; }
 # WireGuard interface that serves a setup
 wg_if() { if [[ $MODE == vrf ]]; then echo "wg-s$SETUP"; else echo wg0; fi; }
-# PBR and hybrid: one ip rule per booking selects the setup's table
-rules() { [[ $MODE != vrf ]]; }
+# PBR: one ip rule per booking selects the setup's table (hybrid: one static rule per setup)
+rules() { [[ $MODE == pbr ]]; }
 table() { echo $((1000 + SETUP)); }
 peer_ip() { wg show "$(wg_if)" allowed-ips | awk -v k="$PUBKEY" '$1==k {print $2}' | cut -d/ -f1; }
-# PBR/hybrid: which setup a tunnel IP is routed to (from the ip rules)
+# PBR: which setup a tunnel IP is routed to (from the ip rules)
 pbr_setup_of() {
   ip -j rule show | jq -r --arg ip "$1" '.[] | select(.src==$ip and .iif=="wg0") | .table' | head -1 \
     | awk '{ if ($1 ~ /^[0-9]+$/) print $1 - 1000 }'
@@ -57,11 +60,14 @@ case "$cmd" in
     case "$sub" in
       add)
         need_setup; valid_key
-        [[ "$IP" =~ ^10\.250\.[0-9]+\.[0-9]+$ ]] || die "--ip must be a 10.250.x.y tunnel address"
+        # the setup is part of the address: 10.250.<setup>.<user>, user 1-254
+        [[ "$IP" =~ ^10\.250\.([0-9]+)\.([0-9]+)$ && ${BASH_REMATCH[1]} == "$SETUP" \
+           && ${BASH_REMATCH[2]} -ge 1 && ${BASH_REMATCH[2]} -le 254 ]] \
+          || die "--ip must be 10.250.$SETUP.<user 1-254> for setup $SETUP (got '$IP')"
         # Cryptokey routing: this key may only send from exactly this tunnel IP
         wg set "$(wg_if)" peer "$PUBKEY" allowed-ips "$IP/32"
         if rules; then
-          # Step 2 in PBR/hybrid mode: route this tunnel IP to the setup's gateway
+          # Step 2 in PBR mode: route this tunnel IP to the setup's gateway
           ip rule del from "$IP" iif wg0 2>/dev/null || true
           ip rule add from "$IP" iif wg0 lookup "$(table)" pref 10000
         fi
@@ -84,7 +90,9 @@ case "$cmd" in
           done
         else
           wg show wg0 dump | tail -n +2 | while read -r key _psk _ep ips hs rx tx _ka; do
-            ip_=${ips%/32}; s=$(pbr_setup_of "$ip_"); s=${s:--}
+            ip_=${ips%/32}
+            if [[ $MODE == pbr ]]; then s=$(pbr_setup_of "$ip_"); else s=$(cut -d. -f3 <<<"$ip_"); fi
+            s=${s:--}
             [[ -z "$SETUP" || "$SETUP" == "$s" ]] || continue
             echo "$s $key $ips $hs $rx $tx"
           done
@@ -113,7 +121,11 @@ case "$cmd" in
     else
       echo "wg0 port $(wg show wg0 listen-port) peers $(wg show wg0 peers | grep -c . || true)"
       for s in $(setup_ids); do
-        echo "setup $s table $((1000 + s)) rules $(ip rule show | grep -c "lookup $((1000 + s))\b" || true)"
+        if [[ $MODE == pbr ]]; then
+          echo "setup $s table $((1000 + s)) rules $(ip rule show | grep -c "lookup $((1000 + s))\b" || true)"
+        else
+          echo "setup $s table $((1000 + s)) rule $(ip rule show | grep "lookup $((1000 + s))\b" | awk '{print $3}')"
+        fi
       done
     fi ;;
   *) die "unknown command $cmd (peer, pubkey, port, nat, status)" ;;

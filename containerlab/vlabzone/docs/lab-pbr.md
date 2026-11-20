@@ -36,8 +36,8 @@ decides per tunnel source address which setup gateway a packet goes to:
 ```text
              ┌──────────────────────────── lab-edge ────────────────────────────┐
  UDP 51820 ──┤ wg0 10.250.0.1                                                    │
- (eth1)      │  ip rule from 10.250.1.12 iif wg0 → table 1012 → via 10.199.0.12 ─┼─┐
-             │  ip rule from 10.250.2.7  iif wg0 → table 1007 → via 10.199.0.7  ─┼─┤ eth2.199 10.199.0.1
+ (eth1)      │  ip rule from 10.250.12.1 iif wg0 → table 1012 → via 10.199.0.12 ─┼─┐
+             │  ip rule from 10.250.7.2  iif wg0 → table 1007 → via 10.199.0.7  ─┼─┤ eth2.199 10.199.0.1
              │  (no rule → main table: no route into any setup)                  │ │ VLAN 199
              └───────────────────────────────────────────────────────────────────┘ │
      ┌─────────────────────────────────────────────────────────────────────────────┘
@@ -62,7 +62,7 @@ decides per tunnel source address which setup gateway a packet goes to:
 | corp-fw ↔ lab-edge | 10.20.99.0/30 | the **only** path for tunnel traffic |
 | corp-fw ↔ broker | 10.20.98.0/30 | the **only** path for API traffic |
 | Lab management | 10.198.0.0/24 | broker .1, edge .2, lab-agg .3, lab-sys1 .4, lab-sys2 .5 – invisible to the corporate side |
-| WireGuard tunnels | 10.250.0.0/16 | edge 10.250.0.1 on `wg0`; context = 10.250.\<user\>.\<setup\>. **This address is what the edge routes on** |
+| WireGuard tunnels | 10.250.0.0/16 | edge 10.250.0.1 on `wg0`; context = 10.250.\<setup\>.\<user\> ([tunnel-addresses.md](tunnel-addresses.md)). **This address is what the edge routes on** |
 | Transfer | 10.199.0.0/24, VLAN 199 | edge .1, gateway of setup N = .N (`vlab-cfg gw-ip N`) |
 | Setups 12, 7, 5 | 192.168.1.0/24 (all), VLAN 112 / 107 / 105 | deliberately the **same** network; each setup's gateway gw-N is .254. 12 and 7 share system switch sys1 |
 
@@ -76,11 +76,11 @@ Each line was captured at the named hop (TCP SYN, shortened):
 
 | # | Hop | What is seen | What happened |
 |---|---|---|---|
-| 1 | `ws-std` wg-s12 | `10.250.1.12.45574 > 192.168.1.20.80` | the route `192.168.1.0/24 dev wg-s12 src 10.250.1.12` sends it into the tunnel |
+| 1 | `ws-std` wg-s12 | `10.250.1.12.45574 > 192.168.1.20.80` | the route `192.168.1.0/24 dev wg-s12 src 10.250.12.1` sends it into the tunnel |
 | 2 | `ws-std` eth1 | `10.20.10.11.56682 > 10.20.99.2.51820: UDP, length 96` | WireGuard encrypts it. **Same port 51820 for every setup** |
 | 3 | `corp-fw` eth10 | `10.20.10.11.56682 > 10.20.99.2.51820: UDP` | the corporate side sees only encrypted UDP to one port |
-| 4 | `lab-edge` wg0 | `10.250.1.12.45574 > 192.168.1.20.80` | decrypted. The key allows only source `10.250.1.12/32` |
-| 5 | `lab-edge` eth2 | `vlan 199 … 10.250.1.12.45574 > 192.168.1.20.80` | `ip rule from 10.250.1.12 iif wg0 lookup 1012` → `default via 10.199.0.12`. Into the **transfer** VLAN 199, **not translated**: the tunnel address is still the source |
+| 4 | `lab-edge` wg0 | `10.250.1.12.45574 > 192.168.1.20.80` | decrypted. The key allows only source `10.250.12.1/32` |
+| 5 | `lab-edge` eth2 | `vlan 199 … 10.250.1.12.45574 > 192.168.1.20.80` | `ip rule from 10.250.12.1 iif wg0 lookup 1012` → `default via 10.199.0.12`. Into the **transfer** VLAN 199, **not translated**: the tunnel address is still the source |
 | 6 | `lab-agg` eth1 → eth21 | `vlan 199 … 10.250.1.12.45574 > 192.168.1.20.80` | to gw-12's trunk port (the gateway's MAC was learned in VLAN 199 there) |
 | 7 | `gw-12` eth1.199 | `10.250.1.12.45574 > 192.168.1.20.80` | the gateway receives the tunnel address |
 | 8 | `gw-12` eth1.112 | `192.168.1.254.45574 > 192.168.1.20.80` | **MASQUERADE here**, on the gateway: source becomes `192.168.1.254` |
@@ -91,19 +91,19 @@ Each line was captured at the named hop (TCP SYN, shortened):
 The edge's routing decision for Alice, as the kernel reports it:
 
 ```text
-$ ip route get 192.168.1.20 from 10.250.1.12 iif wg0
-192.168.1.20 from 10.250.1.12 via 10.199.0.12 dev eth2.199 table 1012
+$ ip route get 192.168.1.20 from 10.250.12.1 iif wg0
+192.168.1.20 from 10.250.12.1 via 10.199.0.12 dev eth2.199 table 1012
 ```
 
 The edge's conntrack entry shows **no translation**; that happens on gw-12:
 
 ```text
-src=10.250.1.12 dst=192.168.1.20 sport=49174 dport=80   src=192.168.1.20 dst=10.250.1.12 sport=80 dport=49174
+src=10.250.12.1 dst=192.168.1.20 sport=49174 dport=80   src=192.168.1.20 dst=10.250.12.1 sport=80 dport=49174
 ```
 
-The reply: the device answers `.254` (gw-12). gw-12 reverses the NAT and routes `10.250.1.12` via
+The reply: the device answers `.254` (gw-12). gw-12 reverses the NAT and routes `10.250.12.1` via
 `10.199.0.1` back to the edge. The edge finds `10.250.0.0/16 dev wg0` in its main table, and WireGuard picks
-the peer whose allowed IPs contain `10.250.1.12`.
+the peer whose allowed IPs contain `10.250.12.1`.
 
 **Where the setup is decided:** by the **`ip rule`** for the tunnel source address (hop 5), created per booking.
 If it points to the wrong table, the packet goes to the wrong gateway (section 6). On the switches, the VLAN of
@@ -131,7 +131,7 @@ at all; it only decides which gateway a tunnel's traffic goes to.
 ```text
 $ ip rule show
 0:      from all lookup local
-10000:  from 10.250.1.12 iif wg0 lookup 1012      ← created by edge-ctl peer add (per booking)
+10000:  from 10.250.12.1 iif wg0 lookup 1012      ← created by edge-ctl peer add (per booking)
 32766:  from all lookup main
 32767:  from all lookup default
 
@@ -152,8 +152,8 @@ $ ip route                                         (main table – no route into
 |---|---|---|
 | One `wg0` on port 51820 **[real]** | one port for every setup; the corporate allowance could shrink to this single port | – |
 | Table `1000+N` per setup with only `default via 10.199.0.N` **[real]** | everything a context sends goes to its setup's gateway and nowhere else | – |
-| Per booking: `ip rule from 10.250.U.N iif wg0 lookup 1000+N pref 10000` **[real]** | **the** isolation mechanism of PBR: the tunnel source address picks the table. `/32` allowed IPs per key make sure the address can't be faked (E06) | the main table is used, which has no route into any setup: no access (tested, fail-closed) |
-| `iif wg0` in every rule **[real]** | the rule only applies to packets that really came out of the tunnel, where WireGuard has checked the source address | tested: a packet with a forged source `10.250.1.12` arriving from the transfer VLAN would be routed into setup 12's table. With `iif wg0`: "network unreachable" |
+| Per booking: `ip rule from 10.250.N.U iif wg0 lookup 1000+N pref 10000` **[real]** | **the** isolation mechanism of PBR: the tunnel source address picks the table. `/32` allowed IPs per key make sure the address can't be faked (E06) | the main table is used, which has no route into any setup: no access (tested, fail-closed) |
+| `iif wg0` in every rule **[real]** | the rule only applies to packets that really came out of the tunnel, where WireGuard has checked the source address | tested: a packet with a forged source `10.250.12.1` arriving from the transfer VLAN would be routed into setup 12's table. With `iif wg0`: "network unreachable" |
 | Main table without routes into setups **[real]** | a missing rule must not lead anywhere | a missing rule would leak into whichever setup the main table points to |
 | No VRF, no setup VLAN, no NAT on the edge **[real]** | the setup side lives entirely on the gateways | – |
 | `ip_forward=1`, no default route, keys generated at start, no peers at start | as in the VRF lab ([lab-vrf.md](lab-vrf.md#3-lab-edge--wireguard-vrf-per-setup-nat)) | |
@@ -174,7 +174,7 @@ There is no NAT on the edge in this lab.
 
 | Command | Effect in this lab |
 |---|---|
-| `edge-ctl peer add --setup N --pubkey K --ip 10.250.U.N` | `wg set wg0 peer K allowed-ips 10.250.U.N/32` **and** `ip rule add from 10.250.U.N iif wg0 lookup 1000+N`: **two** changes per booking |
+| `edge-ctl peer add --setup N --pubkey K --ip 10.250.N.U` | `wg set wg0 peer K allowed-ips 10.250.N.U/32` **and** `ip rule add from 10.250.N.U iif wg0 lookup 1000+N`: **two** changes per booking. An address outside 10.250.N.0/24 is refused |
 | `edge-ctl peer del --setup N --pubkey K` | removes peer and rule, deletes conntrack entries (E08) |
 | `edge-ctl pubkey` / `port --setup N` | key and port of `wg0`, the same for every setup |
 | `edge-ctl peer list` | the setup column comes from the ip rules (`-` = peer without a rule) |

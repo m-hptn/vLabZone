@@ -54,7 +54,7 @@ its own routing table, its own VLAN interface and its own WireGuard interface:
 | corp-fw ↔ lab-edge | 10.20.99.0/30 | the **only** path for tunnel traffic |
 | corp-fw ↔ broker | 10.20.98.0/30 | the **only** path for API traffic |
 | Lab management | 10.198.0.0/24 | broker .1, edge .2, lab-agg .3, lab-sys1 .4, lab-sys2 .5 – invisible to the corporate side |
-| WireGuard tunnels | 10.250.0.0/16 | edge 10.250.0.1 in every VRF; context = 10.250.\<user\>.\<setup\> |
+| WireGuard tunnels | 10.250.0.0/16 | edge 10.250.0.1 in every VRF; context = 10.250.\<setup\>.\<user\> ([tunnel-addresses.md](tunnel-addresses.md)) |
 | Setups 12, 7, 5 | 192.168.1.0/24 (all), VLAN 112 / 107 / 105 | deliberately the **same** network; the edge is .254 in each. 12 and 7 share system switch sys1 |
 
 ---
@@ -67,10 +67,10 @@ Each line was captured at the named hop (TCP SYN, shortened):
 
 | # | Hop | What is seen | What happened |
 |---|---|---|---|
-| 1 | `ws-std` wg-s12 | `10.250.1.12.53222 > 192.168.1.20.80` | the route `192.168.1.0/24 dev wg-s12 src 10.250.1.12` sends it into the tunnel |
+| 1 | `ws-std` wg-s12 | `10.250.1.12.53222 > 192.168.1.20.80` | the route `192.168.1.0/24 dev wg-s12 src 10.250.12.1` sends it into the tunnel |
 | 2 | `ws-std` eth1 | `10.20.10.11.46708 > 10.20.99.2.51812: UDP, length 96` | WireGuard encrypts it; **port 51812 selects setup 12** |
 | 3 | `corp-fw` eth10 | `10.20.10.11.46708 > 10.20.99.2.51812: UDP` | the corporate side sees only encrypted UDP inside the allowed range |
-| 4 | `lab-edge` wg-s12 | `10.250.1.12.53222 > 192.168.1.20.80` | decrypted. The key allows only source `10.250.1.12/32`. The packet now lives in VRF `vrf-s12` |
+| 4 | `lab-edge` wg-s12 | `10.250.1.12.53222 > 192.168.1.20.80` | decrypted. The key allows only source `10.250.12.1/32`. The packet now lives in VRF `vrf-s12` |
 | 5 | `lab-edge` eth2 | `vlan 112 … 192.168.1.254.53222 > 192.168.1.20.80` | routed in table 1012 to `eth2.112`, **MASQUERADE** to 192.168.1.254, tagged VLAN 112 |
 | 6 | `lab-agg` eth1 → eth11 | `vlan 112 … 192.168.1.254.53222 > 192.168.1.20.80` | the aggregation switch forwards VLAN 112 only to the trunk of the system switch that holds setup 12 (sys1) |
 | 7 | `lab-sys1` eth1 | `vlan 112 …` | arrives on sys1's uplink trunk |
@@ -80,11 +80,11 @@ Each line was captured at the named hop (TCP SYN, shortened):
 The edge's conntrack entry shows the translation in both directions:
 
 ```text
-src=10.250.1.12 dst=192.168.1.20 sport=49168 dport=80   src=192.168.1.20 dst=192.168.1.254 sport=80 dport=49168
+src=10.250.12.1 dst=192.168.1.20 sport=49168 dport=80   src=192.168.1.20 dst=192.168.1.254 sport=80 dport=49168
 ```
 
-The reply takes the same path backwards. The edge reverses the NAT and routes `10.250.1.12` in table 1012 into
-`wg-s12`. WireGuard picks the peer whose allowed IPs contain `10.250.1.12`, encrypts the reply and sends it to
+The reply takes the same path backwards. The edge reverses the NAT and routes `10.250.12.1` in table 1012 into
+`wg-s12`. WireGuard picks the peer whose allowed IPs contain `10.250.12.1`, encrypts the reply and sends it to
 the workspace's UDP endpoint.
 
 **Where the setup is decided:** by the **UDP port** the workspace connects to (hop 2), and on the switches by
@@ -148,7 +148,7 @@ broker will call it over SSH from stage 3.
 
 | Command | Effect in this lab |
 |---|---|
-| `edge-ctl peer add --setup N --pubkey K --ip 10.250.U.N` | `wg set wg-sN peer K allowed-ips 10.250.U.N/32`: **one** change per booking. Cryptokey routing: the key may only send from this one address (E06) |
+| `edge-ctl peer add --setup N --pubkey K --ip 10.250.N.U` | `wg set wg-sN peer K allowed-ips 10.250.N.U/32`: **one** change per booking. An address outside 10.250.N.0/24 is refused. Cryptokey routing: the key may only send from this one address (E06) |
 | `edge-ctl peer del --setup N --pubkey K` | removes the peer and deletes its conntrack entries, so running sessions end at once (E08) |
 | `edge-ctl pubkey` / `port --setup N` | key and port of `wg-sN`, different for every setup |
 | `edge-ctl peer list`, `status` | state for tests and the later reconcile loop |

@@ -90,7 +90,7 @@ vLabZone/containerlab/vlabzone/
   on UDP 51800+N with 10.250.0.1/16, both enslaved to the VRF; nft `masquerade` on `oifname eth2.<vlan>`.
   Same IPs in different VRFs are fine; the WG UDP socket stays in the default VRF.
 - **Edge PBR mode:** single `wg0` on 51820, `eth2.199` = 10.199.0.1/24, per context
-  `ip rule from 10.250.u.s iif wg0 lookup <table N>`; table N default via 10.199.0.N (`gw-N`), `gw-N`
+  `ip rule from 10.250.s.u iif wg0 lookup <table N>` (tunnel addresses 10.250.<setup>.<user> since 2026-11-20); table N default via 10.199.0.N (`gw-N`), `gw-N`
   masquerades into its setup VLAN and routes 10.250/16 back via 10.199.0.1.
 - **Alias:** nft `dnat ip prefix to` / NETMAP 10.200.N.0/24 ↔ 192.168.1.0/24 on the edge for `ws-ci` contexts.
 - **Workspaces:** desktop mode = one `wg-sN` interface + route 192.168.1.0/24; power mode = WG interface
@@ -184,17 +184,18 @@ vLabZone/containerlab/vlabzone/
       restrict by destination (now done in both modes).
     - Any change to a WireGuard interface drops its sessions; workspaces recover after ~12–16 s (E18).
 11b. **Hybrid edge mode** ✅ implemented 2026-11-20. Constraint: the corporate firewall should need ONE rule
-    with ONE port. Hybrid = one `wg0` (51820) like PBR, setups as VRFs on the edge like VRF (no gateways),
-    `ip rule` per booking into the VRF's table. Lab `vlabzone-hybrid` (`make up EDGE_MODE=hybrid`);
-    corp-fw now writes the allowance per mode (VRF: 51800-52099, PBR/hybrid: 51820, E01 checks it).
-    Two safeguards, written once per setup: catch-all `ip rule iif wg0 unreachable` (also added to PBR) and a
-    forward rule per setup matching the last octet of the tunnel address (`ip saddr & 0.0.0.255 == N`) →
-    a wrong booking rule fails closed (E10; control without it: foreign access). Suites: VRF 63, PBR 67,
-    hybrid 63 passed. RouterOS trial (26/26): works; filter can't match `out-interface=vlanN` (invalid) or
-    `vrf-sN` (never matches) → mangle mark per setup VLAN; no last-octet match possible → the safeguard needs
-    tunnel addresses grouped by setup. Variant 10.250.<setup>.<user> tested: one static rule per setup,
-    1 change per booking, wrong rule fails closed. **Open decision: switch the tunnel address scheme to
-    10.250.<setup>.<user>** (docs/vrf-vs-pbr.md §4).
+    with ONE port. Hybrid = one `wg0` (51820) like PBR, setups as VRFs on the edge like VRF (no gateways).
+    Lab `vlabzone-hybrid` (`make up EDGE_MODE=hybrid`); corp-fw writes the allowance per mode
+    (VRF: 51800-52099, PBR/hybrid: 51820, E01 checks it). Catch-all `ip rule iif wg0 unreachable` in PBR and
+    hybrid. RouterOS trial: filter can't match `out-interface=vlanN` (invalid) or `vrf-sN` (never matches)
+    → mangle mark per setup VLAN; RouterOS can't match the last octet of an address.
+11c. **Tunnel addresses 10.250.<setup>.<user>** ✅ implemented 2026-11-20 (was 10.250.<user>.<setup>, idea.md §4.3).
+    Every setup owns 10.250.N.0/24 → hybrid uses ONE STATIC rule per setup (`from 10.250.N.0/24 lookup 1000+N`)
+    and a forward rule per setup prefix; a booking is only the WireGuard peer (1 change, like VRF). A wrong
+    setup rule fails closed on Linux and RouterOS. `edge-ctl peer add` refuses addresses outside the setup's
+    prefix (all modes). PBR keeps its rule per booking (the design being compared). Limits: 255 setups,
+    254 users per setup. Recommendation: hybrid. Details: `containerlab/vlabzone/docs/tunnel-addresses.md`.
+    Suites: VRF 64, PBR 69, hybrid 65 passed (0 failed). RouterOS trials: VRF 25/25, PBR 25/25, hybrid 23/23.
 12. `lab enter` namespaces in `ws-power` (E11), alias mode in `ws-ci` (E13).
 13. `acc-12-ser`: socat pty + fake console + ser2net RFC 2217 on :3001; pyserial client test (E14).
 14. RouterOS edge: `render.py` + `.rsc` templates for VRF/PBR/alias, `routeros_image` Ansible role,

@@ -5,14 +5,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tests.lib import labcfg
 from tests.lib.node import Node
 
 EDGE_ENDPOINT = "10.20.99.2"
 
 
 def tunnel_ip(user: int, setup: int) -> str:
-    """Tunnel address scheme from idea.md §4.3: 10.250.<user>.<setup>."""
-    return f"10.250.{user}.{setup}"
+    """Tunnel address 10.250.<setup>.<user> (docs/tunnel-addresses.md; idea.md §4.3 had user and
+    setup the other way round). Computed by the same code the nodes use (vlab-cfg)."""
+    return labcfg.tunnel_ip(setup, user)
 
 
 @dataclass

@@ -156,7 +156,7 @@ make test            pytest suite against the lab of EDGE_MODE
 make test-stage1     only the experiments of one stage
 make topology        regenerate topologies, view files (topology/views/) and viewer layouts after editing config/setups.yaml
 make pcap NODE=corp-fw IF=eth10 SECONDS=30   capture into results/
-make spike-up | spike-down                   RouterOS trial lab (docs/routeros-spike.md)
+make spike-up | spike-test | spike-down SPIKE=vrf|pbr   RouterOS trial labs (docs/routeros-spike.md)
 make clean           remove venv and local results
 ```
 

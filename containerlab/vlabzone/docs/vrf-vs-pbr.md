@@ -29,6 +29,8 @@ Both labs pass every functional test: E01–E06 and E09. E10 adds the difference
 | Setup-level mistake: tunnel interface in the wrong VRF + matching forward rule | **one-way leak** (requests arrive, replies are dropped) | – |
 | Gateways / setups reaching each other over the transfer VLAN | – (no shared segment) | blocked by the gateway firewalls |
 | Edge addresses reachable from tunnels | only the VRF's own addresses | every edge address through the `local` table, unless the firewall restricts by destination (done now) |
+| RouterOS (stage 1b): edge services from tunnels without filter | not reachable (services listen in `main`, tunnels are in setup VRFs) | **reachable** (SSH/HTTP on every edge address) |
+| RouterOS: setup route missing | – | fail-closed only with `action=lookup-only-in-table`; with `lookup` the tunnel fell back to the main table and reached the corporate network |
 
 Also measured: changing a WireGuard interface (VRF membership, down/up) drops all its sessions; workspaces
 recover after **12–16 s**. In VRF this affects one setup, in PBR every user at once (single `wg0`).

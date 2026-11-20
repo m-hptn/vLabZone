@@ -116,11 +116,14 @@ test: venv ## Run the test suite against the lab of EDGE_MODE
 test-stage%: venv ## Run the tests of one stage, e.g. make test-stage1
 	$(PY) -m pytest tests -m stage$* $(PYTEST_ARGS)
 
-.PHONY: spike-up spike-down
-SPIKE_TOPO := topology/spike-routeros.clab.yml
-spike-up: ## Stage 1b: deploy the RouterOS trial lab (CHR, needs /dev/kvm + make build-routeros)
+.PHONY: spike-up spike-down spike-test
+SPIKE ?= vrf
+SPIKE_TOPO = topology/spike-routeros$(if $(filter pbr,$(SPIKE)),-pbr).clab.yml
+spike-up: ## Stage 1b: deploy the RouterOS trial lab, SPIKE=vrf|pbr (needs /dev/kvm + make build-routeros)
 	$(CLAB) deploy -t $(SPIKE_TOPO) --reconfigure
-spike-down: ## Stage 1b: destroy the RouterOS trial lab
+spike-test: venv ## Stage 1b: configure the CHR via REST and run the trial checks, SPIKE=vrf|pbr
+	$(PY) scripts/spike-routeros.py --mode $(SPIKE)
+spike-down: ## Stage 1b: destroy the RouterOS trial lab, SPIKE=vrf|pbr
 	$(CLAB) destroy -t $(SPIKE_TOPO) --cleanup
 
 .PHONY: pcap

@@ -1,0 +1,77 @@
+# Stage 1b – RouterOS trial, PBR variant (see docs/routeros-spike.md).
+#
+#   ws (10.20.10.11) ── ether2 [CHR: wg0 + routing rules] ether3 ══ 199 ══ sw ═╤═ gw-12 (199 + 112) ─┐
+#                       10.20.10.1          10.199.0.1                         ╘═ gw-7  (199 + 107) ─┤
+#                                                                              ├─ dev12 192.168.1.20  VLAN 112 (setup 12)
+#                                                                              └─ dev7  192.168.1.20  VLAN 107 (setup 7)
+#
+# The gateways are the same Linux gw-N nodes as in the PBR lab (router image, ROLE=gw).
+# Run with:  make spike-up SPIKE=pbr / spike-down SPIKE=pbr
+name: vlab-ros-pbr
+
+mgmt:
+  network: vlab-mgmt
+  ipv4-subnet: ${VLAB_MGMT_SUBNET:=172.31.254.0/24}
+  ipv6-subnet: ${VLAB_MGMT_SUBNET6:=3fff:172:31:254::/64}
+
+topology:
+  defaults:
+    kind: linux
+
+  nodes:
+    chr:
+      kind: mikrotik_ros
+      image: vrnetlab/mikrotik_routeros:${ROUTEROS_VERSION:=7.24.6}
+      # management via ether1 (vrnetlab); all other nodes have no management interface
+
+    ws:
+      image: hwpool/workspace:latest
+      network-mode: none
+      env: { WS_IP: 10.20.10.11/24, WS_MODE: desktop }
+
+    sw:
+      image: hwpool/base:latest
+      network-mode: none
+      exec:
+        - ip link add br0 type bridge vlan_filtering 1 vlan_default_pvid 0
+        - ip link set br0 up
+        - ip link set eth1 master br0 up            # CHR: transfer VLAN only
+        - bridge vlan add dev eth1 vid 199
+        - ip link set eth2 master br0 up            # gw-12: transfer + setup 12
+        - bridge vlan add dev eth2 vid 199
+        - bridge vlan add dev eth2 vid 112
+        - ip link set eth3 master br0 up            # gw-7: transfer + setup 7
+        - bridge vlan add dev eth3 vid 199
+        - bridge vlan add dev eth3 vid 107
+        - ip link set eth4 master br0 up
+        - bridge vlan add dev eth4 vid 112 pvid untagged
+        - ip link set eth5 master br0 up
+        - bridge vlan add dev eth5 vid 107 pvid untagged
+
+    gw-12:
+      image: hwpool/router:latest
+      network-mode: none
+      binds: ["../config:/etc/vlab:ro"]
+      env: { ROLE: gw, SETUP: "12" }
+    gw-7:
+      image: hwpool/router:latest
+      network-mode: none
+      binds: ["../config:/etc/vlab:ro"]
+      env: { ROLE: gw, SETUP: "7" }
+
+    dev12:
+      image: hwpool/device:latest
+      network-mode: none
+      env: { NAME: dev12, SWITCH: spike, IP: 192.168.1.20/24, GW: 192.168.1.1 }
+    dev7:
+      image: hwpool/device:latest
+      network-mode: none
+      env: { NAME: dev7, SWITCH: spike, IP: 192.168.1.20/24, GW: 192.168.1.1 }
+
+  links:
+    - endpoints: ["ws:eth1", "chr:eth1"]      # RouterOS ether2
+    - endpoints: ["chr:eth2", "sw:eth1"]      # RouterOS ether3: trunk, VLAN 199
+    - endpoints: ["gw-12:eth1", "sw:eth2"]
+    - endpoints: ["gw-7:eth1", "sw:eth3"]
+    - endpoints: ["sw:eth4", "dev12:eth1"]
+    - endpoints: ["sw:eth5", "dev7:eth1"]

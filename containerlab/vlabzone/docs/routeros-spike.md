@@ -1,29 +1,32 @@
 # Stage 1b – RouterOS trial (MikroTik CHR as lab edge)
 
-**Question:** can a MikroTik running RouterOS do what the Linux edge does in the VRF lab: one VRF per setup with
-a WireGuard interface and a VLAN interface, the same setup network in several VRFs, MASQUERADE, and a firewall
-that only lets "tunnel N → setup N" through? And can the broker drive it through the REST API?
+**Question:** can a MikroTik running RouterOS do what the Linux edge does in the two labs, in the **VRF design**
+(one VRF per setup with a WireGuard and a VLAN interface) and in the **PBR design** (one WireGuard interface,
+a routing rule per booking, a gateway per setup)? Overlapping setup networks, MASQUERADE, a firewall that only lets
+"tunnel → own setup" through, and everything driven by the broker through the REST API?
 
-**Answer: yes**, with one important difference in how firewall rules refer to interfaces inside a VRF
-(section 3), and one hardening step that a stock RouterOS does not have (section 4).
+**Answer: yes, both designs work**, with three things to know:
+- how firewall rules refer to interfaces inside a VRF (section 3),
+- the routing-rule action in PBR, which decides whether a missing setup route fails closed (section 5),
+- a stock RouterOS exposes its management, from the corporate side and, in PBR, from the tunnels (section 4).
 
 | | |
 |---|---|
 | RouterOS | **7.24.6 (long-term)** as Cloud Hosted Router (CHR) in containerlab (`mikrotik_ros`, vrnetlab image). To be repeated with the version of the real MikroTik |
-| Lab | [`topology/spike-routeros.clab.yml`](../topology/spike-routeros.clab.yml): `ws` → CHR → `sw` (trunk 112, 107) → `dev12`, `dev7` (both 192.168.1.20) |
-| Script | [`scripts/spike-routeros.py`](../scripts/spike-routeros.py): configures the CHR via REST, runs 25 checks, writes `results/spike-routeros-*.json` |
-| Result | **25 of 25 checks pass**, on a freshly booted CHR and again on an already configured one |
+| Labs | VRF: [`spike-routeros.clab.yml`](../topology/spike-routeros.clab.yml): `ws` → CHR → `sw` (trunk 112, 107) → `dev12`, `dev7` (both 192.168.1.20)<br>PBR: [`spike-routeros-pbr.clab.yml`](../topology/spike-routeros-pbr.clab.yml): `ws` → CHR → `sw` (trunk 199) → `gw-12`, `gw-7` (the Linux gateways of the PBR lab) → `dev12`, `dev7` |
+| Script | [`scripts/spike-routeros.py`](../scripts/spike-routeros.py) `--mode vrf\|pbr`: configures the CHR via REST, runs the checks, writes `results/spike-routeros-<mode>-*.json`. Every run starts without filter rules |
+| Result | **VRF: 25 of 25, PBR: 25 of 25 checks pass**, each on a freshly booted CHR and again on an already configured one |
 
 ```bash
-make build-routeros          # once per host: CHR image via vrnetlab (needs /dev/kvm to run)
-make spike-up                # deploy the trial lab (~45 s until RouterOS answers)
-.venv/bin/python scripts/spike-routeros.py
-make spike-down
+make build-routeros                 # once per host: CHR image via vrnetlab (needs /dev/kvm to run)
+make spike-up     SPIKE=vrf|pbr     # deploy a trial lab (~45 s until RouterOS answers)
+make spike-test   SPIKE=vrf|pbr     # configure via REST + checks
+make spike-down   SPIKE=vrf|pbr
 ```
 
 ---
 
-## 1. Results
+## 1. Results – VRF design
 
 | Check | Result |
 |---|---|
@@ -45,7 +48,7 @@ make spike-down
 
 ---
 
-## 2. Configuration (equivalent RouterOS CLI)
+## 2. Configuration – VRF design (equivalent RouterOS CLI)
 
 The script uses the REST API. This is the same configuration as CLI commands, for one setup. Setup 7 is identical
 with 7 / 107 / 51807.
@@ -129,11 +132,77 @@ and API. The Linux edge drops everything there except WireGuard. For the real Mi
 
 ---
 
-## 5. Consequences for the plan
+## 5. PBR design on RouterOS
 
-1. The RouterOS edge can follow the **VRF design** of the Linux edge. Nothing found in the trial pushes towards PBR.
+**Configuration** (equivalent CLI; the gateways `gw-12` / `gw-7` are the Linux gateways of the PBR lab):
+
+```routeros
+/ip address add address=10.20.10.1/24 interface=ether2
+/interface vlan add name=vlan199 vlan-id=199 interface=ether3          # transfer VLAN only on the trunk
+/ip address add address=10.199.0.1/24 interface=vlan199
+/interface wireguard add name=wg0 listen-port=51820                    # one port for every setup
+/ip address add address=10.250.0.1/16 interface=wg0
+/routing table add name=s12 fib
+/ip route add dst-address=0.0.0.0/0 gateway=10.199.0.12 routing-table=s12
+
+# per booking (broker): TWO changes
+/interface wireguard peers add interface=wg0 public-key="<key>" allowed-address=10.250.1.12/32
+/routing rule add src-address=10.250.1.12/32 interface=wg0 table=s12 action=lookup-only-in-table
+
+/ip firewall filter
+add chain=input connection-state=established,related action=accept
+add chain=input connection-state=invalid action=drop
+add chain=input in-interface=ether1 action=accept comment="management (lab: REST/SSH)"
+add chain=input in-interface=ether2 protocol=udp dst-port=51820 action=accept
+add chain=input in-interface=wg0 dst-address=10.250.0.1 protocol=icmp action=accept
+add chain=input action=drop
+add chain=forward connection-state=established,related action=accept
+add chain=forward connection-state=invalid action=drop
+add chain=forward in-interface=wg0 out-interface=vlan199 action=accept   # which gateway: routing rules
+add chain=forward action=drop
+```
+
+REST for the broker: `PUT /rest/interface/wireguard/peers` **and** `PUT /rest/routing/rule`
+`{"src-address":"10.250.1.12/32","interface":"wg0","table":"s12","action":"lookup-only-in-table"}`; revoke deletes both.
+
+**Results**
+
+| Check | Result |
+|---|---|
+| Routing tables with a default route via the gateway | active; gateway resolved via the connected transfer net |
+| Booking = peer + routing rule | 2 changes per booking (VRF: 1) |
+| Setup 12 and setup 7 over **one** port 51820, same IP 192.168.1.20 | each reaches its own device via its gateway |
+| MASQUERADE on the gateway, spoofing | devices see .254; spoofed source dropped |
+| Routing rule missing | **fail-closed**: main table has no route into a setup |
+| Routing rule points to the wrong table | **access to the foreign setup**, as on Linux (E10) |
+| **Edge services from a tunnel, no filter** | **reachable**: SSH/HTTP on 10.250.0.1, 10.199.0.1 and 10.20.10.1. In the VRF design they were not (the tunnels live in a setup VRF, the services in `main`) |
+| Firewall with `in-interface=wg0` / `out-interface=vlan199` | valid and working: `wg0` is not in a VRF, so the interface rules of section 3 don't apply |
+| With firewall | services closed from corporate side and tunnels; tunnel gateway ping allowed; setups reach neither edge, other gateway, tunnels nor corporate net; negative control and revoke as expected |
+
+**Finding: the routing-rule action decides what happens when a setup route is missing**
+
+| Rule action | Setup table has its route | Setup table route missing (gateway removed, misconfiguration) |
+|---|---|---|
+| `lookup-only-in-table` | to the gateway | **fail-closed**: unreachable |
+| `lookup` | to the gateway | **falls back to the main table: the tunnel reached the corporate network** (workspace 10.20.10.11, edge SSH on 10.20.10.1) |
+| `lookup` + edge firewall | to the gateway | blocked by the forward rule (`wg0` → `vlan199` only) |
+
+So for PBR on RouterOS: **always `action=lookup-only-in-table`**, and the forward rule as a second line of
+defence. Linux has the same fall-through (`ip rule … lookup` continues with the next rule when the table has no
+route); the Linux PBR edge is protected by its forward rule. A catch-all `ip rule add iif wg0 unreachable` after the
+per-booking rules would make Linux fail closed without relying on the firewall.
+
+---
+
+## 6. Consequences for the plan
+
+1. The RouterOS edge can follow either design. Nothing in the trial pushes towards PBR; on the contrary, in PBR
+   the tunnels see the router's own services in `main` and every booking is a routing rule that can be wrong.
+   **VRF stays the recommended design** ([vrf-vs-pbr.md](vrf-vs-pbr.md)).
 2. The broker driver `edge_routeros.py` (stage 3) uses the REST API as shown in section 2. It must
    wait for or verify rule activation, and check `invalid` flags during reconcile.
 3. Startup config for the RouterOS edge in the lab (stage 2): generate the commands of section 2 from `setups.yaml`.
-4. Open: repeat with the **RouterOS version of the real MikroTik**; check the PBR variant (`/routing rule`) only if
-   PBR becomes relevant again; MTU/throughput only with a CHR licence (free licence: 1 Mbit/s per interface).
+4. If PBR is chosen anyway: `action=lookup-only-in-table` for every rule, firewall as above, and the broker's
+   reconcile loop compares rules (table!) with the bookings.
+5. Open: repeat with the **RouterOS version of the real MikroTik**; MTU/throughput only with a CHR licence
+   (free licence: 1 Mbit/s per interface).

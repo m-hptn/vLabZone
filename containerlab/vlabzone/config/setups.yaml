@@ -1,14 +1,14 @@
 # Single source of truth for setups, VLANs, networks, switch ports and devices.
-# Read by the edge entrypoint, lab-sw, the broker and the tests (idea.md §4.3).
+# Read by the topology generator (topology/gen.py), the edge, lab-sw, the
+# PBR gateways, the broker and the tests (idea.md §4.3).
 edge:
   tunnel_net: 10.250.0.0/16
   tunnel_ip: 10.250.0.1
   wg_port_base: 51800          # VRF mode: setup N listens on wg_port_base + N
   wg_port_pbr: 51820           # PBR mode: single wg0
-  trunk_if: eth2               # Linux edge; RouterOS: ether3
-  transfer:                    # PBR mode only
+  transfer:                    # PBR mode only: edge <-> setup gateways gw-N
     vlan: 199
-    net: 10.199.0.0/24
+    net: 10.199.0.0/24         # edge .1, gw-N .N
     edge_ip: 10.199.0.1
   alias_net: 10.200.0.0/16     # setup N -> 10.200.N.0/24
 
@@ -16,15 +16,17 @@ setups:
   - id: 12
     vlan: 112
     net: 192.168.1.0/24
-    gateway: 192.168.1.254
+    gateway: 192.168.1.254     # edge (VRF mode) or gw-12 (PBR mode)
+    pbr_gateway: { setup_port: eth18, transfer_port: eth19 }
     devices:
       - { name: dev-12-20, ip: 192.168.1.20, port: eth11 }
       - { name: dev-12-21, ip: 192.168.1.21, port: eth12 }
-      # acc-12-ser (192.168.1.30, eth13, serial) follows in stage 2
+      # acc-12-ser (192.168.1.30, eth13, serial) follows with the serial device
   - id: 7
     vlan: 107
     net: 192.168.1.0/24
     gateway: 192.168.1.254
+    pbr_gateway: { setup_port: eth28, transfer_port: eth29 }
     devices:
       - { name: dev-7-20, ip: 192.168.1.20, port: eth21 }
       - { name: dev-7-21, ip: 192.168.1.21, port: eth22 }

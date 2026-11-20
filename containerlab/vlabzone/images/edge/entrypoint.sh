@@ -28,7 +28,7 @@ sysctl_set net.ipv4.ip_forward 1
 mkdir -p /run/vlab/keys
 case "$EDGE_MODE" in
   vrf) . /usr/local/lib/vlab/edge-vrf.sh ;;
-  pbr) die "EDGE_MODE=pbr follows in stage 2" ;;
+  pbr) . /usr/local/lib/vlab/edge-pbr.sh ;;
   *)   die "unknown EDGE_MODE $EDGE_MODE" ;;
 esac
 

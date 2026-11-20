@@ -163,6 +163,17 @@ vLabZone/containerlab/vlabzone/
 
 ### Stage 2 – Variants (E10, E11, E13, E14, E27 part 1)
 11. Edge PBR mode + `gw-12`, `gw-7`; run the stage-1 suite in both modes; deliberate misconfig tests (E10).
+    ✅ implemented 2026-11-20 (done before stage 1b). One lab per mode, generated from `setups.yaml`
+    (`topology/gen.py` → `vlabzone-vrf`, `vlabzone-pbr`), both can run side by side (`make up-all`,
+    `make test-all`). Both pass E01–E06, E09.
+
+    Findings (details: `containerlab/vlabzone/docs/nodes.md` §3.10):
+    - PBR: 2 objects per booking (peer + ip rule) vs. 1 in VRF. Missing rule → fail-closed; wrong
+      table → two-way access to a foreign setup. VRF only leaks via a setup-level misconfiguration
+      (tunnel in wrong VRF + matching forward rule), and then only one-way.
+    - PBR: the `local` table makes every edge address reachable from tunnels; the edge firewall must
+      restrict by destination (now done in both modes).
+    - Any change to a WireGuard interface drops its sessions; workspaces recover after ~12–16 s (E18).
 12. `lab enter` namespaces in `ws-power` (E11), alias mode in `ws-ci` (E13).
 13. `acc-12-ser`: socat pty + fake console + ser2net RFC 2217 on :3001; pyserial client test (E14).
 14. RouterOS edge: `render.py` + `.rsc` templates for VRF/PBR/alias, `routeros_image` Ansible role,

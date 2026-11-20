@@ -25,7 +25,7 @@ table inet edge {
     ct state invalid drop
     iif lo accept
     iifname "eth1" udp dport 51800-52099 accept comment "WireGuard from corporate"
-    meta sdifname "wg-s*" icmp type echo-request accept comment "tunnel gateway ping"
+    meta sdifname "wg-s*" ip daddr $TUN_IP icmp type echo-request accept comment "tunnel gateway ping"
     iifname "eth3" tcp dport 22 accept comment "broker management (stage 3)"
     counter comment "dropped input"
   }

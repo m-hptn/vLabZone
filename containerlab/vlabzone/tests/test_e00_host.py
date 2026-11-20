@@ -1,5 +1,6 @@
 """Stage 0: the host and the images are ready (no running lab needed)."""
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,12 @@ def test_setups_config_consistent(setups):
     assert len(vlans) == len(set(vlans)), "VLAN IDs must be unique"
     ports = [d["port"] for s in setups["setups"] for d in s["devices"]]
     assert len(ports) == len(set(ports)), "switch ports must be unique"
+
+
+def test_topologies_up_to_date():
+    """topology/vlabzone-*.clab.yml must match config/setups.yaml (run `make topology`)."""
+    res = subprocess.run([sys.executable, str(ROOT / "topology" / "gen.py"), "--check"], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
 
 
 def test_routeros_image(edge_impl):

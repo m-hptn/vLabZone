@@ -12,16 +12,15 @@ from tests.lib.results import write_protocol
 pytestmark = pytest.mark.stage1
 
 
-def test_e04_masquerade_is_required(lab, tunnel):
-    edge = lab["lab-edge"]
+def test_e04_masquerade_is_required(lab, tunnel, nat, edge_mode):
     t = tunnel("ws-std", ALICE, 12)
 
     with_nat = ident(t.curl("http://192.168.1.20"))
-    edge.run("edge-ctl nat off --setup 12")
+    nat(12, False)   # edge (VRF) or gw-12 (PBR)
     try:
         without_nat = ident(t.curl("http://192.168.1.20", timeout=3))
     finally:
-        edge.run("edge-ctl nat on --setup 12")
+        nat(12, True)
     restored = ident(t.curl("http://192.168.1.20"))
 
     assert with_nat and with_nat["peer"] == "192.168.1.254"
@@ -30,4 +29,5 @@ def test_e04_masquerade_is_required(lab, tunnel):
 
     write_protocol("E04", "Access despite wrong device gateway", True,
                    {"with_nat": with_nat, "without_nat": without_nat},
+                   setup_notes=f"MASQUERADE on {'lab-edge' if edge_mode == 'vrf' else 'gw-12'}",
                    consequence="MASQUERADE on the setup VLAN is mandatory")

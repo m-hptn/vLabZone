@@ -10,8 +10,10 @@ from tests.lib import wg
 from tests.lib.node import Node
 
 ROOT = Path(__file__).resolve().parents[1]
-LAB = "hwpool"
-TOPOLOGY = yaml.safe_load((ROOT / "topology" / "hwpool.clab.yml").read_text())
+# One lab per edge mode (topology/gen.py): vlabzone-vrf, vlabzone-pbr
+EDGE_MODE = os.environ.get("EDGE_MODE", "vrf")
+LAB = f"vlabzone-{EDGE_MODE}"
+TOPOLOGY = yaml.safe_load((ROOT / "topology" / f"{LAB}.clab.yml").read_text())
 LAB_NODES = sorted(TOPOLOGY["topology"]["nodes"])
 
 # Test users (config/users.yaml): tunnel IP = 10.250.<user id>.<setup>
@@ -37,7 +39,7 @@ def edge_impl() -> str:
 
 @pytest.fixture(scope="session")
 def edge_mode() -> str:
-    return os.environ.get("EDGE_MODE", "vrf")
+    return EDGE_MODE
 
 
 @pytest.fixture(scope="session")
@@ -51,7 +53,7 @@ def lab() -> dict[str, Node]:
     nodes = {name: Node(LAB, name) for name in LAB_NODES}
     missing = [n.container for n in nodes.values() if not n.is_running()]
     if missing:
-        pytest.skip(f"lab not deployed (make up) – missing {', '.join(missing[:3])}")
+        pytest.skip(f"lab {LAB} not deployed (make up EDGE_MODE={EDGE_MODE}) – missing {', '.join(missing[:3])}")
     not_ready = [n.name for n in nodes.values() if n.run("test -f /run/vlab-ready", check=False).returncode]
     if not_ready:
         pytest.fail(f"lab nodes not ready: {not_ready} (scripts/wait-ready.sh {LAB})")
@@ -78,6 +80,19 @@ def tunnel(lab):
     yield _make
     for t in reversed(created):
         t.close()
+
+
+@pytest.fixture
+def nat(lab):
+    """nat(setup, on: bool) – switch the MASQUERADE into a setup where it lives:
+    on the edge in VRF mode, on the setup gateway gw-N in PBR mode."""
+    def _set(setup: int, on: bool) -> None:
+        state = "on" if on else "off"
+        if EDGE_MODE == "vrf":
+            lab["lab-edge"].run(f"edge-ctl nat {state} --setup {setup}")
+        else:
+            lab[f"gw-{setup}"].run(f"gw-ctl nat {state}")
+    return _set
 
 
 def ident(result) -> dict | None:

@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # edge-ctl – the only interface to grant or revoke access on the Linux edge.
 # Used by the test fixtures (stage 1/2) and by the broker over SSH (stage 3).
+# Same commands in both edge modes; what they change differs:
+#
+#                     VRF mode                         PBR mode
+#   peer add          wg peer on wg-sN                 wg peer on wg0 + ip rule -> table 1000+N
+#   peer del          remove peer                      remove peer + ip rule
+#   pubkey/port       of wg-sN                         of wg0 (same for all setups)
+#   nat on|off        MASQUERADE on the edge           not on the edge (gw-N: gw-ctl nat)
 #
 #   edge-ctl peer add  --setup N --pubkey KEY --ip 10.250.U.N   grant access
 #   edge-ctl peer del  --setup N --pubkey KEY                   revoke access
 #   edge-ctl peer list [--setup N]                              setup pubkey ip handshake rx tx
-#   edge-ctl pubkey --setup N                                   public key of the setup's WireGuard
-#   edge-ctl port   --setup N                                   UDP port of the setup's WireGuard
-#   edge-ctl nat on|off --setup N                               MASQUERADE on/off (experiment E04)
-#   edge-ctl status                                             mode, setups, peer count
+#   edge-ctl pubkey --setup N                                   public key the workspace must use
+#   edge-ctl port   --setup N                                   UDP port the workspace must use
+#   edge-ctl nat on|off --setup N                               MASQUERADE on/off (E04, VRF only)
+#   edge-ctl status                                             mode, setups, peers
 set -euo pipefail
 
 MODE=$(cat /run/vlab/edge-mode 2>/dev/null || echo "${EDGE_MODE:-vrf}")
@@ -25,14 +32,21 @@ parse() {
     esac
   done
 }
+setup_ids() { vlab-cfg setups | awk '{print $1}'; }
 need_setup() {
   [[ -n "$SETUP" ]] || die "--setup missing"
-  vlab-cfg setups | awk '{print $1}' | grep -qx "$SETUP" || die "unknown setup $SETUP"
+  setup_ids | grep -qx "$SETUP" || die "unknown setup $SETUP"
 }
-wg_if() { echo "wg-s$SETUP"; }
 valid_key() { [[ "$PUBKEY" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$ ]] || die "invalid public key"; }
-
-[[ "$MODE" == vrf ]] || die "edge mode $MODE not supported yet"
+# WireGuard interface that serves a setup
+wg_if() { if [[ $MODE == vrf ]]; then echo "wg-s$SETUP"; else echo wg0; fi; }
+table() { echo $((1000 + SETUP)); }
+peer_ip() { wg show "$(wg_if)" allowed-ips | awk -v k="$PUBKEY" '$1==k {print $2}' | cut -d/ -f1; }
+# PBR: which setup a tunnel IP is routed to (from the ip rules)
+pbr_setup_of() {
+  ip -j rule show | jq -r --arg ip "$1" '.[] | select(.src==$ip and .iif=="wg0") | .table' | head -1 \
+    | awk '{ if ($1 ~ /^[0-9]+$/) print $1 - 1000 }'
+}
 
 cmd=${1:-status}; sub=${2:-}
 case "$cmd" in
@@ -44,25 +58,42 @@ case "$cmd" in
         [[ "$IP" =~ ^10\.250\.[0-9]+\.[0-9]+$ ]] || die "--ip must be a 10.250.x.y tunnel address"
         # Cryptokey routing: this key may only send from exactly this tunnel IP
         wg set "$(wg_if)" peer "$PUBKEY" allowed-ips "$IP/32"
+        if [[ $MODE == pbr ]]; then
+          # Step 2 in PBR mode: route this tunnel IP to the setup's gateway
+          ip rule del from "$IP" iif wg0 2>/dev/null || true
+          ip rule add from "$IP" iif wg0 lookup "$(table)" pref 10000
+        fi
         echo "added peer ${PUBKEY:0:8}… ip $IP to setup $SETUP" ;;
       del)
         need_setup; valid_key
-        peer_ip=$(wg show "$(wg_if)" allowed-ips | awk -v k="$PUBKEY" '$1==k {print $2}' | cut -d/ -f1)
+        ip_=$(peer_ip)
         wg set "$(wg_if)" peer "$PUBKEY" remove
+        if [[ $MODE == pbr && -n "$ip_" ]]; then
+          ip rule del from "$ip_" iif wg0 lookup "$(table)" 2>/dev/null || true
+        fi
         # drop tracked flows so running sessions end immediately (E08)
-        [[ -n "$peer_ip" ]] && conntrack -D -s "$peer_ip" >/dev/null 2>&1 || true
+        [[ -n "$ip_" ]] && conntrack -D -s "$ip_" >/dev/null 2>&1 || true
         echo "removed peer ${PUBKEY:0:8}… from setup $SETUP" ;;
       list)
-        for s in $(vlab-cfg setups | awk '{print $1}'); do
-          [[ -z "$SETUP" || "$SETUP" == "$s" ]] || continue
-          wg show "wg-s$s" dump | tail -n +2 | awk -v s="$s" '{print s, $1, $4, $5, $6, $7}'
-        done ;;
+        if [[ $MODE == vrf ]]; then
+          for s in $(setup_ids); do
+            [[ -z "$SETUP" || "$SETUP" == "$s" ]] || continue
+            wg show "wg-s$s" dump | tail -n +2 | awk -v s="$s" '{print s, $1, $4, $5, $6, $7}'
+          done
+        else
+          wg show wg0 dump | tail -n +2 | while read -r key _psk _ep ips hs rx tx _ka; do
+            ip_=${ips%/32}; s=$(pbr_setup_of "$ip_"); s=${s:--}
+            [[ -z "$SETUP" || "$SETUP" == "$s" ]] || continue
+            echo "$s $key $ips $hs $rx $tx"
+          done
+        fi ;;
       *) die "usage: edge-ctl peer add|del|list …" ;;
     esac ;;
   pubkey) shift; parse "$@"; need_setup; wg show "$(wg_if)" public-key ;;
   port)   shift; parse "$@"; need_setup; wg show "$(wg_if)" listen-port ;;
   nat)
     shift 2 || true; parse "$@"; need_setup
+    [[ $MODE == vrf ]] || die "PBR mode: NAT runs on gw-$SETUP (gw-ctl nat on|off there)"
     vlan=$(vlab-cfg setup "$SETUP" vlan)
     case "$sub" in
       off) nft flush chain inet edge "nat-s$SETUP"; echo "NAT off for setup $SETUP" ;;
@@ -73,8 +104,15 @@ case "$cmd" in
     esac ;;
   status)
     echo "mode $MODE"
-    for s in $(vlab-cfg setups | awk '{print $1}'); do
-      echo "setup $s port $(wg show "wg-s$s" listen-port) peers $(wg show "wg-s$s" peers | grep -c . || true)"
-    done ;;
+    if [[ $MODE == vrf ]]; then
+      for s in $(setup_ids); do
+        echo "setup $s port $(wg show "wg-s$s" listen-port) peers $(wg show "wg-s$s" peers | grep -c . || true)"
+      done
+    else
+      echo "wg0 port $(wg show wg0 listen-port) peers $(wg show wg0 peers | grep -c . || true)"
+      for s in $(setup_ids); do
+        echo "setup $s table $((1000 + s)) rules $(ip rule show | grep -c "lookup $((1000 + s))\b" || true)"
+      done
+    fi ;;
   *) die "unknown command $cmd (peer, pubkey, port, nat, status)" ;;
 esac

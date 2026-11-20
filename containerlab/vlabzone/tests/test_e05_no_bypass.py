@@ -59,6 +59,8 @@ def test_e05_setup_cannot_reach_out(lab):
             "broker mgmt 10.198.0.1": ping_ok(dev, "10.198.0.1"),
             "edge mgmt 10.198.0.2:22": tcp_open(dev, "10.198.0.2", 22),
             "tunnel gateway 10.250.0.1": ping_ok(dev, "10.250.0.1"),
+            "edge transfer 10.199.0.1": ping_ok(dev, "10.199.0.1"),
+            "other setup's gateway 10.199.0.7": ping_ok(dev, "10.199.0.7"),
             "internet 1.1.1.1:443": tcp_open(dev, "1.1.1.1", 443),
         }
     finally:

@@ -1,11 +1,21 @@
 # Lab nodes – configuration and rationale
 
-This document explains **what each node of the running lab is configured to do and why**.
-It describes the state after stage 1 (Linux edge, `EDGE_MODE=vrf`).
+This document explains **what each node of the running labs is configured to do and why**.
+
+There are two labs, generated from the same source by `topology/gen.py`:
+
+| Lab | Containers | Edge | Extra nodes |
+|---|---|---|---|
+| `vlabzone-vrf` | `clab-vlabzone-vrf-<node>` | VRF per setup (sections 3.1–3.7) | – |
+| `vlabzone-pbr` | `clab-vlabzone-pbr-<node>` | one `wg0` + policy routing (section 3.8) | setup gateways `gw-N` (section 3.9) |
+
+All other nodes are identical in both labs. Command examples use the VRF lab; replace `vrf` with `pbr`
+in the container name for the other one.
 
 - Concept and experiments: [`../../../idea.md`](../../../idea.md) (German)
 - Source of truth for setups, VLANs and devices: [`../config/setups.yaml`](../config/setups.yaml)
-- Topology: [`../topology/hwpool.clab.yml`](../topology/hwpool.clab.yml)
+- Topologies (generated, do not edit): [`vlabzone-vrf.clab.yml`](../topology/vlabzone-vrf.clab.yml),
+  [`vlabzone-pbr.clab.yml`](../topology/vlabzone-pbr.clab.yml), generator [`gen.py`](../topology/gen.py)
 
 Every configuration item is tagged:
 
@@ -131,8 +141,8 @@ Chain `input` (policy drop) only lets workspaces ping their gateway. The firewal
 **Inspect**
 
 ```bash
-docker exec clab-hwpool-corp-fw nft list ruleset
-docker exec clab-hwpool-corp-fw ip route
+docker exec clab-vlabzone-vrf-corp-fw nft list ruleset
+docker exec clab-vlabzone-vrf-corp-fw ip route
 make pcap NODE=corp-fw IF=eth10 SECONDS=20
 ```
 
@@ -203,29 +213,30 @@ It accepts only well-formed keys, known setups and addresses in 10.250.0.0/16.
 **Inspect**
 
 ```bash
-docker exec clab-hwpool-lab-edge edge-ctl status
-docker exec clab-hwpool-lab-edge ip -br addr
-docker exec clab-hwpool-lab-edge ip route show vrf vrf-s12
-docker exec clab-hwpool-lab-edge wg show
-docker exec clab-hwpool-lab-edge nft list ruleset
-docker exec clab-hwpool-lab-edge conntrack -L
+docker exec clab-vlabzone-vrf-lab-edge edge-ctl status
+docker exec clab-vlabzone-vrf-lab-edge ip -br addr
+docker exec clab-vlabzone-vrf-lab-edge ip route show vrf vrf-s12
+docker exec clab-vlabzone-vrf-lab-edge wg show
+docker exec clab-vlabzone-vrf-lab-edge nft list ruleset
+docker exec clab-vlabzone-vrf-lab-edge conntrack -L
 ```
 
 ---
 
 ### 3.3 `lab-sw` – VLAN switch
 
-**Role:** Puts each device into its setup's VLAN and carries all setup VLANs to the edge on one trunk.
+**Role:** Puts each device into its setup's VLAN and connects the edge through one trunk.
 It stands in for the real lab switches, where `sw-port` will become the Ansible automation.
 
 **Interfaces**
 
 | Interface | VLANs | Connected to |
 |---|---|---|
-| eth1 (trunk) | 107, 112, 199 tagged | lab-edge eth2 |
+| eth1 (trunk) | VRF lab: 107, 112 tagged · PBR lab: 199 only | lab-edge eth2 |
 | eth11, eth12 | 112 untagged (PVID) | dev-12-20, dev-12-21 |
 | eth21, eth22 | 107 untagged (PVID) | dev-7-20, dev-7-21 |
 | eth2 | 10.198.0.3/24, not bridged | lab-mgmt |
+| PBR lab only: eth18 / eth19, eth28 / eth29 | 112 / 199, 107 / 199 untagged | gw-12 setup / transfer port, gw-7 setup / transfer port |
 
 **Configuration** (`images/router/roles/switch.sh`, `images/router/sw-port`)
 
@@ -233,7 +244,7 @@ It stands in for the real lab switches, where `sw-port` will become the Ansible 
 |---|---|---|
 | Bridge `br0` with `vlan_filtering 1` **[real]** | the bridge forwards by VLAN. Without filtering, a Linux bridge is one big L2 segment | setup 12 and setup 7 would share one broadcast domain: same IPs, ARP chaos, no isolation |
 | `vlan_default_pvid 0` and VLAN 1 removed from the bridge and trunk **[real]** | new ports land in **no** VLAN instead of the default VLAN 1. A forgotten port is cut off instead of joining a shared default VLAN | a new or forgotten port would end up in VLAN 1 together with every other unconfigured port |
-| Trunk carries only the configured VLANs (from `setups.yaml`) + 199 **[real]** | the edge only gets the VLANs it serves. 199 is the transfer VLAN for the PBR variant (stage 2) | – |
+| Trunk carries only the VLANs the edge needs (`vlab-cfg trunk-vlans`) **[real]** | VRF: the edge is the gateway in every setup, so it gets every setup VLAN. PBR: the edge only talks to the gateways, so it gets VLAN 199 and **no** setup VLAN | an edge with setup VLANs it doesn't use is one more way into the setups |
 | `sw-port <port> <vlan>` **[real]** | removes **all** VLANs from a port and sets exactly one untagged PVID. A port is therefore always in exactly one setup (E20 moves devices this way) | ports could carry several VLANs and connect setups |
 | Management IP on eth2, **outside** the bridge **[real]** | the switch is managed from 10.198.0.0/24 only and has no address in any setup | a switch IP inside a setup would make it reachable, and attackable, from that setup |
 | Ports from `setups.yaml`, missing ports skipped **[sim]** | one source of truth for ports and VLANs | – |
@@ -243,9 +254,9 @@ It stands in for the real lab switches, where `sw-port` will become the Ansible 
 **Inspect**
 
 ```bash
-docker exec clab-hwpool-lab-sw bridge vlan show
-docker exec clab-hwpool-lab-sw bridge fdb show br br0 dynamic   # learned MACs per port and VLAN
-docker exec clab-hwpool-lab-sw sw-port eth12 107     # move dev-12-21 into setup 7 (undo: … eth12 112)
+docker exec clab-vlabzone-vrf-lab-sw bridge vlan show
+docker exec clab-vlabzone-vrf-lab-sw bridge fdb show br br0 dynamic   # learned MACs per port and VLAN
+docker exec clab-vlabzone-vrf-lab-sw sw-port eth12 107     # move dev-12-21 into setup 7 (undo: … eth12 112)
 ```
 
 ---
@@ -274,9 +285,9 @@ It is the corporate target that must **not** be reachable from setups or namespa
 **Inspect**
 
 ```bash
-docker exec clab-hwpool-ws-std curl -s http://10.20.20.10      # corp-svc identity, without tunnel
-docker exec clab-hwpool-dev-12-20 tail /var/log/auth.log
-docker exec clab-hwpool-dev-12-20 ip route
+docker exec clab-vlabzone-vrf-ws-std curl -s http://10.20.20.10      # corp-svc identity, without tunnel
+docker exec clab-vlabzone-vrf-dev-12-20 tail /var/log/auth.log
+docker exec clab-vlabzone-vrf-dev-12-20 ip route
 ```
 
 ---
@@ -309,9 +320,9 @@ docker exec clab-hwpool-dev-12-20 ip route
 **Inspect**
 
 ```bash
-docker exec clab-hwpool-ws-std wg show
-docker exec clab-hwpool-ws-std ip route
-docker exec clab-hwpool-ws-power ip netns list
+docker exec clab-vlabzone-vrf-ws-std wg show
+docker exec clab-vlabzone-vrf-ws-std ip route
+docker exec clab-vlabzone-vrf-ws-power ip netns list
 ```
 
 ---
@@ -328,7 +339,7 @@ has its final place in the network and a health endpoint.
 | `GET /healthz` on 8443 **[sim, for now]** | E01 checks that the API port is reachable through corp-fw. TLS and the API follow in stage 3 |
 
 ```bash
-docker exec clab-hwpool-ws-std curl -s http://10.20.98.2:8443/healthz
+docker exec clab-vlabzone-vrf-ws-std curl -s http://10.20.98.2:8443/healthz
 ```
 
 ---
@@ -342,12 +353,98 @@ docker exec clab-hwpool-ws-std curl -s http://10.20.98.2:8443/healthz
 | Plain bridge over eth1–eth3, no IP **[sim]** | containerlab only has point-to-point links, so this stands in for a management switch/VLAN. It has no address, so it can't be reached |
 | Separate from the trunk and from the corporate side **[real]** | management traffic never shares a segment with setups or workspaces; E05 checks that neither side reaches it |
 
+### 3.8 `lab-edge` in PBR mode (lab `vlabzone-pbr`)
+
+**Role:** Same job as in VRF mode, done differently. A single WireGuard interface takes all tunnels,
+and **policy routing** sends each tunnel address to the gateway of its setup. The edge itself has
+no interface in any setup.
+
+**Interfaces**
+
+| Interface | Address | Purpose |
+|---|---|---|
+| eth1, eth3 | as in VRF mode | corporate side, management |
+| wg0 | 10.250.0.1/16, UDP **51820** | all tunnels, all setups |
+| eth2.199 | 10.199.0.1/24 | transfer VLAN to the gateways gw-N (10.199.0.N) |
+
+**Configuration** (`images/edge/edge-pbr.sh`)
+
+| Setting | Why | Without it |
+|---|---|---|
+| One `wg0` on port 51820 **[real]** | one port for everything; 51820 is inside the corporate allowance | – |
+| Table `1000+N` per setup with only `default via 10.199.0.N` **[real]** | everything a context sends goes to the gateway of its setup and nowhere else | – |
+| Per booking: `ip rule from 10.250.U.N iif wg0 lookup 1000+N pref 10000` **[real]** | **the** isolation mechanism of PBR: the tunnel source address picks the table. `/32` allowed IPs per key make sure the address can't be faked | traffic would be looked up in the main table, which has no route into any setup → no access (tested: fail-closed) |
+| Main table without routes into setups **[real]** | a missing rule must not lead anywhere | a missing rule would leak into whichever setup the main table points to |
+| Forward only `wg0 → eth2.199`, replies via conntrack **[real]** | the edge never forwards from the transfer VLAN into tunnels on its own | gateways or setups could open connections to workspaces |
+| Ping on wg0 only to `10.250.0.1` **[real]** | the `local` routing table is consulted before any `ip rule` lookup, so **every** address of the edge (10.199.0.1, 10.198.0.2, …) is reachable from a tunnel. The firewall must restrict by destination | E10 found the edge answering pings on its transfer and management addresses from a tunnel |
+
+`edge-ctl` accepts the same commands as in VRF mode. `peer add` makes **two** changes here (WireGuard peer
++ ip rule), `peer del` removes both. `pubkey`/`port` return wg0's values for every setup. `nat` is not
+on the edge in this mode: use `gw-ctl` on gw-N.
+
+```bash
+docker exec clab-vlabzone-pbr-lab-edge edge-ctl status
+docker exec clab-vlabzone-pbr-lab-edge ip rule show
+docker exec clab-vlabzone-pbr-lab-edge ip route show table 1012
+docker exec clab-vlabzone-pbr-lab-edge edge-ctl peer list
+```
+
+---
+
+### 3.9 `gw-12`, `gw-7` – setup gateways (lab `vlabzone-pbr`)
+
+**Role:** Gateway between the transfer VLAN and one setup. In PBR mode these take the part the VRF
+interfaces play in VRF mode: the setup's gateway address and the MASQUERADE.
+
+**Interfaces** (router image, `ROLE=gw`, `SETUP=N`, `images/router/roles/gw.sh`)
+
+| Interface | Address | Switch port |
+|---|---|---|
+| eth1 | 10.199.0.N/24 (transfer) | VLAN 199 |
+| eth2 | 192.168.1.254/24 (setup gateway) | the setup's VLAN |
+
+| Setting | Why | Without it |
+|---|---|---|
+| Route `10.250.0.0/16 via 10.199.0.1`, **no default route** **[real]** | replies to the tunnels go back to the edge; nothing else is reachable from the setup | a default route would be a way out of the setup |
+| Forward only `eth1 → eth2` from `10.250.0.0/16`, replies via conntrack **[real]** | only tunnel traffic enters the setup. Nothing goes from the setup into the transfer VLAN, so there is no path to the other gateways or the edge (E10 checks it) | all gateways share VLAN 199; a setup could reach the other setups' gateways |
+| MASQUERADE on eth2, in its own chain **[real]** | same reason as on the VRF edge: devices with a wrong gateway answer `.254` (E04). `gw-ctl nat on\|off` switches it | no answers from devices with a wrong gateway |
+| Input: only ping from the edge **[real]** | the gateway is diagnosable from the edge but not reachable from the setup or the tunnels | – |
+
+```bash
+docker exec clab-vlabzone-pbr-gw-12 gw-ctl status
+docker exec clab-vlabzone-pbr-gw-12 nft list ruleset
+```
+
+---
+
+### 3.10 VRF vs. PBR: what E10 found
+
+Both labs pass every functional test (E01–E06, E09). The differences are in configuration effort and in
+what happens when something is configured wrong:
+
+| | VRF | PBR |
+|---|---|---|
+| Objects changed per booking | 1 (WireGuard peer) | 2 (WireGuard peer + ip rule) |
+| UDP ports in the corporate allowance | one per setup (51800 + N) | one (51820) |
+| Per-booking mistake: peer registered on the wrong setup / rule missing | **fail-closed**: key unknown on that interface, or main table has no route | **fail-closed** (rule missing) |
+| Per-booking mistake: rule points to the wrong table | – (no per-booking routing) | **access to the wrong setup**, two-way: Alice booked 12 and lands in 7 |
+| Setup-level mistake: tunnel interface in the wrong VRF (+ matching forward rule) | **one-way leak**: requests reach setup 7, replies are routed to wg-s7 and dropped | – |
+| Edge reachable from tunnels | only 10.250.0.1 | every edge address through the `local` table, unless the firewall restricts by destination |
+| Setup gateway | the edge itself | separate gateway per setup |
+
+Consequence: in PBR, **every single booking** is a chance to put a user into a foreign setup. In VRF,
+that takes a setup-level mistake, which is made once per setup and can be checked.
+
+Also found: any change to a WireGuard interface (VRF membership, down/up) drops its sessions. Workspaces
+only notice after WireGuard's retry timer, about **12–16 s** in the lab. Relevant for E18 (edge restart).
+
 ---
 
 ## 4. Settings that apply to all nodes
 
 | Setting | Where | Why |
 |---|---|---|
+| Topologies generated from `setups.yaml` **[sim]** | `topology/gen.py` | both labs stay identical except for the edge mode; `make topology` regenerates, a test fails if a committed file is stale |
 | `network-mode: none` **[sim]** | topology defaults | containerlab would otherwise connect every node to a Docker management network, a hidden path past corp-fw. Every node only has its lab links (E05 checks there's no `eth0`) |
 | Management network `vlab-mgmt`, subnet `VLAB_MGMT_SUBNET` **[sim]** | topology `mgmt:` | containerlab always creates one even if no node uses it; its subnet must not collide with other Docker networks on the host |
 | `config/` mounted read-only at `/etc/vlab` **[sim]** | topology defaults | all nodes read `setups.yaml` and `corp-fw.nft` from one place; `vlab-cfg` queries it from shell scripts |
@@ -368,3 +465,6 @@ configuration and of the request to the corporate network team:
 4. Switch: VLAN filtering, no default VLAN on ports, exactly one untagged VLAN per access port, management outside the setups.
 5. Peers only through the broker, `/32` allowed IPs per key, conntrack flush on revoke.
 6. Edge keys must be persistent in production (in the lab they are regenerated on every start).
+7. The edge firewall must restrict what tunnels may reach **on the edge itself** by destination address (only the tunnel gateway), especially with PBR.
+8. Changing a WireGuard interface interrupts all its sessions for ~15 s: plan changes to the edge accordingly.
+9. If PBR is chosen: the broker must verify every ip rule it creates (reconcile), because a wrong table gives access to a foreign setup.

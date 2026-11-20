@@ -5,8 +5,8 @@ A containerlab-based lab that reproduces the access path
 on a single Linux host. Background and experiments: [`../../idea.md`](../../idea.md) (German),
 implementation roadmap: [`../../PLAN.md`](../../PLAN.md).
 
-> **Status: stage 1.** Full topology with the Linux edge in VRF mode; experiments
-> E01–E06 and E09 run automatically (`make test-stage1`). Next: RouterOS trial (stage 1b).
+> **Status:** two labs, `vlabzone-vrf` and `vlabzone-pbr`, one per edge mode, generated from
+> `config/setups.yaml`. Both pass E01–E06 and E09; E10 compares the modes. Next: RouterOS trial (stage 1b).
 
 ---
 
@@ -149,9 +149,11 @@ make host-check      preflight after provisioning
 make build           (re)build the images
 make build-routeros  build the RouterOS CHR image
 make smoke           2-node smoke lab (VLAN, VRF, WireGuard)
-make up | down | reset | inspect     full lab
-make test            pytest suite (EDGE_IMPL / EDGE_MODE respected)
+make up | down | reset | inspect     lab of EDGE_MODE (default vrf), e.g. make up EDGE_MODE=pbr
+make up-all | down-all | test-all    both labs (they can run side by side)
+make test            pytest suite against the lab of EDGE_MODE
 make test-stage1     only the experiments of one stage
+make topology        regenerate topology/vlabzone-*.clab.yml after editing config/setups.yaml
 make pcap NODE=corp-fw IF=eth10 SECONDS=30   capture into results/
 make clean           remove venv and local results
 ```
@@ -162,17 +164,19 @@ without sudo; everyone else gets `sudo containerlab`. Everything else only needs
 ### Try it by hand
 
 ```bash
-make up                                   # ~20 s, waits until all 13 nodes are ready
-docker exec -it clab-hwpool-ws-std bash   # a workspace
-docker exec clab-hwpool-lab-edge edge-ctl status
+make up                                         # VRF lab, ~20 s, waits until all nodes are ready
+make up EDGE_MODE=pbr                           # PBR lab (can run at the same time)
+docker exec -it clab-vlabzone-vrf-ws-std bash   # a workspace
+docker exec clab-vlabzone-vrf-lab-edge edge-ctl status
 ```
 
 A tunnel from `ws-std` to setup 12 (what `tests/lib/wg.py` does for the tests – from stage 3 the
 broker and `lab-agent` take over):
 
 ```bash
-E() { docker exec clab-hwpool-lab-edge "$@"; }      # works in bash and zsh
-W() { docker exec clab-hwpool-ws-std "$@"; }
+L=vrf                                               # or pbr – the commands are the same
+E() { docker exec clab-vlabzone-$L-lab-edge "$@"; }  # works in bash and zsh
+W() { docker exec clab-vlabzone-$L-ws-std "$@"; }
 PUB=$(W sh -c 'umask 077; wg genkey > /run/vlab/k && wg pubkey < /run/vlab/k')
 E edge-ctl peer add --setup 12 --pubkey "$PUB" --ip 10.250.1.12
 W sh -c "ip link add wg-s12 type wireguard &&
@@ -199,6 +203,7 @@ Every node's configuration and why it is needed: [`docs/nodes.md`](docs/nodes.md
 | `lab-edge` | 10.20.99.2, 10.198.0.2, 192.168.1.254 per setup | WireGuard + VRF per setup, `edge-ctl` |
 | `broker` | 10.20.98.2, 10.198.0.1 | health endpoint on 8443 (API: stage 3) |
 | `lab-sw` | 10.198.0.3 | VLAN switch, `sw-port <port> <vlan>` |
+| `gw-12`, `gw-7` (PBR lab only) | 10.199.0.12 / .7, 192.168.1.254 | setup gateways: MASQUERADE, `gw-ctl nat on\|off` |
 | `dev-12-20/21`, `dev-7-20/21` | 192.168.1.20/21 in VLAN 112 / 107 | devices: HTTP identity, SSH `lab`/`lab`, syslog, iperf3 |
 
 ---
@@ -210,7 +215,7 @@ containerlab/vlabzone/
 ├── Makefile, VERSION, .env.example, requirements.txt, pytest.ini
 ├── deploy/ansible/        site.yml, inventories, group_vars, roles/{preflight,host_prereqs,vlabzone,routeros_image,lab_deploy}
 ├── scripts/               preflight.sh, smoke.sh, wait-ready.sh
-├── topology/              hwpool.clab.yml (lab), smoke.clab.yml
+├── topology/              gen.py → vlabzone-vrf.clab.yml, vlabzone-pbr.clab.yml (generated); smoke.clab.yml
 ├── images/                base + role images (router, edge, workspace, device, serial, mgmt, broker), routeros/build.sh
 ├── config/                setups.yaml (setups, VLANs, devices), corp-fw.nft, users.yaml
 ├── docs/                  nodes.md – configuration and rationale per node
@@ -228,6 +233,6 @@ containerlab/vlabzone/
 | preflight: `kernel module vrf missing` | install the generic kernel (`linux-image-amd64` / `linux-generic`) and reboot |
 | preflight: `/dev/kvm missing` with RouterOS enabled | enable VT-x/AMD-V in the BIOS, or nested virtualization on the hypervisor (vSphere: "Expose hardware assisted virtualization"; Proxmox: CPU type `host`) |
 | deploy: `Pool overlaps with other one` | set `VLAB_MGMT_SUBNET` / `vlab_mgmt_subnet` to a free range (`make host-check` shows conflicts) |
-| `make up` hangs at wait-ready | the log of the node that isn't ready is printed; `docker logs clab-hwpool-<node>` |
+| `make up` hangs at wait-ready | the log of the node that isn't ready is printed; `docker logs clab-vlabzone-<mode>-<node>` |
 | smoke: `WARN: eth0 exists in node` | the containerlab version ignores `network-mode: none` – the nft fallback (idea.md §4.4) is needed |
 | image build fails behind a proxy | set `vlab_http_proxy` / `vlab_https_proxy` or `vlab_apt_mirror` |

@@ -1,0 +1,11 @@
+# Simulated device: password login for the test user, banner with the setup number
+Include /etc/ssh/sshd_config.d/*.conf
+PermitRootLogin no
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+UsePAM yes
+Banner /etc/issue.net
+PrintMotd no
+SyslogFacility AUTH
+LogLevel INFO
+Subsystem sftp /usr/lib/openssh/sftp-server

@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Query config/setups.yaml (mounted at /etc/vlab) from shell scripts.
+
+  vlab-cfg setups                 -> "<id> <vlan> <net> <gateway>" per setup
+  vlab-cfg ports                  -> "<port> <vlan> <device>" per device switch port
+  vlab-cfg get edge.wg_port_base  -> scalar value
+  vlab-cfg setup <id> <key>       -> value of one setup field
+"""
+import os
+import sys
+
+import yaml
+
+CFG = os.path.join(os.environ.get("VLAB_CONFIG_DIR", "/etc/vlab"), "setups.yaml")
+
+
+def main(argv):
+    with open(CFG) as fh:
+        cfg = yaml.safe_load(fh)
+    cmd = argv[1] if len(argv) > 1 else "setups"
+    if cmd == "setups":
+        for s in cfg["setups"]:
+            print(s["id"], s["vlan"], s["net"], s["gateway"])
+    elif cmd == "ports":
+        for s in cfg["setups"]:
+            for d in s.get("devices", []):
+                print(d["port"], s["vlan"], d["name"])
+    elif cmd == "get":
+        val = cfg
+        for part in argv[2].split("."):
+            val = val[part]
+        print(val)
+    elif cmd == "setup":
+        sid, key = int(argv[2]), argv[3]
+        print(next(s for s in cfg["setups"] if s["id"] == sid)[key])
+    else:
+        sys.exit(f"unknown command {cmd}")
+
+
+if __name__ == "__main__":
+    main(sys.argv)

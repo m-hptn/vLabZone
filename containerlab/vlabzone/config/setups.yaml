@@ -20,7 +20,7 @@ setups:
     devices:
       - { name: dev-12-20, ip: 192.168.1.20, port: eth11 }
       - { name: dev-12-21, ip: 192.168.1.21, port: eth12 }
-      - { name: acc-12-ser, ip: 192.168.1.30, port: eth13, kind: serial }
+      # acc-12-ser (192.168.1.30, eth13, serial) follows in stage 2
   - id: 7
     vlan: 107
     net: 192.168.1.0/24

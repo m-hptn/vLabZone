@@ -1,0 +1,38 @@
+#!/usr/sbin/nft -f
+# Simulated corporate firewall: the ONE-TIME allowance for the hardware pool.
+#   workspaces -> lab edge : UDP 51800-52099 (WireGuard)
+#   workspaces -> broker   : TCP 443, 8443 (HTTPS API)
+# Nothing from the lab may open connections towards the corporate network.
+flush ruleset
+
+define WS_NET   = br-ws
+define CORP_SVC = eth4
+define TO_EDGE  = eth10
+define TO_BRK   = eth11
+
+table inet corp {
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+
+    ct state established,related accept
+    ct state invalid drop
+
+    # inside the corporate network
+    iifname $WS_NET oifname $CORP_SVC accept
+    iifname $CORP_SVC oifname $WS_NET accept
+
+    # the one-time allowance towards the lab
+    iifname $WS_NET oifname $TO_EDGE udp dport 51800-52099 accept
+    iifname $WS_NET oifname $TO_BRK  tcp dport { 443, 8443 } accept
+
+    counter comment "dropped by corporate firewall"
+  }
+
+  chain input {
+    type filter hook input priority filter; policy drop;
+    ct state established,related accept
+    iif lo accept
+    # workspaces may ping their gateway; nothing from the lab side
+    iifname $WS_NET icmp type echo-request accept
+  }
+}

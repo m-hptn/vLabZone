@@ -19,6 +19,8 @@ RUN if [ -n "$APT_MIRROR" ]; then \
       python3 python3-yaml procps less tini ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
+COPY rootfs/ /
+
 LABEL org.opencontainers.image.title="hwpool/base" \
       org.opencontainers.image.version="${VLAB_VERSION}"
 

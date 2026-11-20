@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# sw-port <port> <vlan> – make <port> an untagged access port in <vlan>.
+# Removes all other VLANs from the port. Called at start and by the broker
+# (stage 3) – the equivalent of the later Ansible automation of the real switches.
+set -euo pipefail
+port=${1:?usage: sw-port <port> <vlan>}
+vlan=${2:?usage: sw-port <port> <vlan>}
+[[ "$vlan" =~ ^[0-9]+$ ]] && (( vlan >= 1 && vlan <= 4094 )) || { echo "invalid VLAN $vlan" >&2; exit 2; }
+[[ -e /sys/class/net/$port ]] || { echo "no such port $port" >&2; exit 2; }
+
+for vid in $(bridge -j vlan show dev "$port" | jq -r '.[].vlans[]?.vlan'); do
+  bridge vlan del dev "$port" vid "$vid"
+done
+bridge vlan add dev "$port" vid "$vlan" pvid untagged
+echo "$port -> VLAN $vlan"

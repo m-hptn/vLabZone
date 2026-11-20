@@ -77,8 +77,9 @@ smoke: ## Deploy a 2-node smoke lab, check VLAN/VRF/WireGuard support, destroy i
 	scripts/smoke.sh
 
 .PHONY: up
-up: _require-topo ## Deploy the lab topology
+up: _require-topo ## Deploy the lab topology and wait until all nodes are ready
 	$(CLAB) deploy -t $(TOPO) --reconfigure
+	scripts/wait-ready.sh $(LAB_NAME)
 
 .PHONY: down
 down: _require-topo ## Destroy the lab topology
@@ -93,7 +94,17 @@ inspect: _require-topo ## Show the running lab nodes
 
 .PHONY: test
 test: venv ## Run the test suite (respects EDGE_IMPL / EDGE_MODE)
-	$(PY) -m pytest tests
+	$(PY) -m pytest tests $(PYTEST_ARGS)
+
+test-stage%: venv ## Run the tests of one stage, e.g. make test-stage1
+	$(PY) -m pytest tests -m stage$* $(PYTEST_ARGS)
+
+.PHONY: pcap
+pcap: ## Capture on a node: make pcap NODE=corp-fw IF=eth10 [SECONDS=30]
+	@test -n "$(NODE)" -a -n "$(IF)" || { echo "usage: make pcap NODE=<node> IF=<interface> [SECONDS=30]"; exit 1; }
+	@mkdir -p results
+	docker exec clab-$(LAB_NAME)-$(NODE) timeout $(or $(SECONDS),30) tcpdump -i $(IF) -nn -U -w - > results/$(NODE)-$(IF)-$$(date +%Y%m%d-%H%M%S).pcap || true
+	@ls -1t results/*.pcap | head -1
 
 .PHONY: clean
 clean: ## Remove the venv and local results (images stay)

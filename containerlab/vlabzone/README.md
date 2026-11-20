@@ -5,8 +5,8 @@ A containerlab-based lab that reproduces the access path
 on a single Linux host. Background and experiments: [`../../idea.md`](../../idea.md) (German),
 implementation roadmap: [`../../PLAN.md`](../../PLAN.md).
 
-> **Status: stage 0.** Host provisioning, images, preflight and a smoke lab are in place.
-> The full topology (`topology/hwpool.clab.yml`) comes with stage 1.
+> **Status: stage 1.** Full topology with the Linux edge in VRF mode; experiments
+> E01–E06 and E09 run automatically (`make test-stage1`). Next: RouterOS trial (stage 1b).
 
 ---
 
@@ -149,13 +149,54 @@ make host-check      preflight after provisioning
 make build           (re)build the images
 make build-routeros  build the RouterOS CHR image
 make smoke           2-node smoke lab (VLAN, VRF, WireGuard)
-make up | down | reset | inspect     full lab (from stage 1)
+make up | down | reset | inspect     full lab
 make test            pytest suite (EDGE_IMPL / EDGE_MODE respected)
+make test-stage1     only the experiments of one stage
+make pcap NODE=corp-fw IF=eth10 SECONDS=30   capture into results/
 make clean           remove venv and local results
 ```
 
-containerlab needs root, so `make up/down/smoke` call `sudo containerlab`. Everything else only needs
-the `docker` group.
+containerlab is installed setuid: members of the `clab_admins` group (added by Ansible) run it
+without sudo; everyone else gets `sudo containerlab`. Everything else only needs the `docker` group.
+
+### Try it by hand
+
+```bash
+make up                                   # ~20 s, waits until all 13 nodes are ready
+docker exec -it clab-hwpool-ws-std bash   # a workspace
+docker exec clab-hwpool-lab-edge edge-ctl status
+```
+
+A tunnel from `ws-std` to setup 12 (what `tests/lib/wg.py` does for the tests – from stage 3 the
+broker and `lab-agent` take over):
+
+```bash
+E() { docker exec clab-hwpool-lab-edge "$@"; }      # works in bash and zsh
+W() { docker exec clab-hwpool-ws-std "$@"; }
+PUB=$(W sh -c 'umask 077; wg genkey > /run/vlab/k && wg pubkey < /run/vlab/k')
+E edge-ctl peer add --setup 12 --pubkey "$PUB" --ip 10.250.1.12
+W sh -c "ip link add wg-s12 type wireguard &&
+  wg set wg-s12 private-key /run/vlab/k peer $(E edge-ctl pubkey --setup 12) \
+     endpoint 10.20.99.2:$(E edge-ctl port --setup 12) allowed-ips 0.0.0.0/0 &&
+  ip addr add 10.250.1.12/32 dev wg-s12 && ip link set wg-s12 up &&
+  ip route add 192.168.1.0/24 dev wg-s12 src 10.250.1.12"
+W curl -s http://192.168.1.20    # {"setup": 12, "device": "dev-12-20", ..., "peer": "192.168.1.254"}
+
+# clean up
+E edge-ctl peer del --setup 12 --pubkey "$PUB"; W ip link del wg-s12
+```
+
+### Lab at a glance
+
+| Node | Addresses | Purpose |
+|---|---|---|
+| `ws-std`, `ws-power`, `ws-ci` | 10.20.10.11–13 | workspaces (corporate) |
+| `corp-svc` | 10.20.20.10 | corporate service |
+| `corp-fw` | 10.20.10.1, .20.1, .99.1, .98.1 | corporate firewall, only UDP 51800–52099 / TCP 443, 8443 to the lab |
+| `lab-edge` | 10.20.99.2, 10.198.0.2, 192.168.1.254 per setup | WireGuard + VRF per setup, `edge-ctl` |
+| `broker` | 10.20.98.2, 10.198.0.1 | health endpoint on 8443 (API: stage 3) |
+| `lab-sw` | 10.198.0.3 | VLAN switch, `sw-port <port> <vlan>` |
+| `dev-12-20/21`, `dev-7-20/21` | 192.168.1.20/21 in VLAN 112 / 107 | devices: HTTP identity, SSH `lab`/`lab`, syslog, iperf3 |
 
 ---
 
@@ -165,10 +206,10 @@ the `docker` group.
 containerlab/vlabzone/
 ├── Makefile, VERSION, .env.example, requirements.txt, pytest.ini
 ├── deploy/ansible/        site.yml, inventories, group_vars, roles/{preflight,host_prereqs,vlabzone,routeros_image,lab_deploy}
-├── scripts/               preflight.sh, smoke.sh
-├── topology/              smoke.clab.yml (hwpool.clab.yml from stage 1)
+├── scripts/               preflight.sh, smoke.sh, wait-ready.sh
+├── topology/              hwpool.clab.yml (lab), smoke.clab.yml
 ├── images/                base + role images (router, edge, workspace, device, serial, mgmt, broker), routeros/build.sh
-├── config/                setups.yaml (setups, VLANs, devices), users.yaml
+├── config/                setups.yaml (setups, VLANs, devices), corp-fw.nft, users.yaml
 ├── tests/                 pytest suite, one module per experiment
 └── results/               experiment protocols and pcaps (not committed)
 ```
@@ -182,5 +223,7 @@ containerlab/vlabzone/
 | `permission denied ... docker.sock` after provisioning | log out and in again (new `docker` group membership) |
 | preflight: `kernel module vrf missing` | install the generic kernel (`linux-image-amd64` / `linux-generic`) and reboot |
 | preflight: `/dev/kvm missing` with RouterOS enabled | enable VT-x/AMD-V in the BIOS, or nested virtualization on the hypervisor (vSphere: "Expose hardware assisted virtualization"; Proxmox: CPU type `host`) |
+| deploy: `Pool overlaps with other one` | set `VLAB_MGMT_SUBNET` / `vlab_mgmt_subnet` to a free range (`make host-check` shows conflicts) |
+| `make up` hangs at wait-ready | the log of the node that isn't ready is printed; `docker logs clab-hwpool-<node>` |
 | smoke: `WARN: eth0 exists in node` | the containerlab version ignores `network-mode: none` – the nft fallback (idea.md §4.4) is needed |
 | image build fails behind a proxy | set `vlab_http_proxy` / `vlab_https_proxy` or `vlab_apt_mirror` |

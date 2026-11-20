@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# edge-ctl – the only interface to grant or revoke access on the Linux edge.
+# Used by the test fixtures (stage 1/2) and by the broker over SSH (stage 3).
+#
+#   edge-ctl peer add  --setup N --pubkey KEY --ip 10.250.U.N   grant access
+#   edge-ctl peer del  --setup N --pubkey KEY                   revoke access
+#   edge-ctl peer list [--setup N]                              setup pubkey ip handshake rx tx
+#   edge-ctl pubkey --setup N                                   public key of the setup's WireGuard
+#   edge-ctl port   --setup N                                   UDP port of the setup's WireGuard
+#   edge-ctl nat on|off --setup N                               MASQUERADE on/off (experiment E04)
+#   edge-ctl status                                             mode, setups, peer count
+set -euo pipefail
+
+MODE=$(cat /run/vlab/edge-mode 2>/dev/null || echo "${EDGE_MODE:-vrf}")
+die() { echo "edge-ctl: $*" >&2; exit 1; }
+
+SETUP="" PUBKEY="" IP=""
+parse() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --setup)  SETUP=${2:-}; shift; shift || true ;;
+      --pubkey) PUBKEY=${2:-}; shift; shift || true ;;
+      --ip)     IP=${2:-}; shift; shift || true ;;
+      *) die "unknown argument $1" ;;
+    esac
+  done
+}
+need_setup() {
+  [[ -n "$SETUP" ]] || die "--setup missing"
+  vlab-cfg setups | awk '{print $1}' | grep -qx "$SETUP" || die "unknown setup $SETUP"
+}
+wg_if() { echo "wg-s$SETUP"; }
+valid_key() { [[ "$PUBKEY" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$ ]] || die "invalid public key"; }
+
+[[ "$MODE" == vrf ]] || die "edge mode $MODE not supported yet"
+
+cmd=${1:-status}; sub=${2:-}
+case "$cmd" in
+  peer)
+    shift 2 || true; parse "$@"
+    case "$sub" in
+      add)
+        need_setup; valid_key
+        [[ "$IP" =~ ^10\.250\.[0-9]+\.[0-9]+$ ]] || die "--ip must be a 10.250.x.y tunnel address"
+        # Cryptokey routing: this key may only send from exactly this tunnel IP
+        wg set "$(wg_if)" peer "$PUBKEY" allowed-ips "$IP/32"
+        echo "added peer ${PUBKEY:0:8}… ip $IP to setup $SETUP" ;;
+      del)
+        need_setup; valid_key
+        peer_ip=$(wg show "$(wg_if)" allowed-ips | awk -v k="$PUBKEY" '$1==k {print $2}' | cut -d/ -f1)
+        wg set "$(wg_if)" peer "$PUBKEY" remove
+        # drop tracked flows so running sessions end immediately (E08)
+        [[ -n "$peer_ip" ]] && conntrack -D -s "$peer_ip" >/dev/null 2>&1 || true
+        echo "removed peer ${PUBKEY:0:8}… from setup $SETUP" ;;
+      list)
+        for s in $(vlab-cfg setups | awk '{print $1}'); do
+          [[ -z "$SETUP" || "$SETUP" == "$s" ]] || continue
+          wg show "wg-s$s" dump | tail -n +2 | awk -v s="$s" '{print s, $1, $4, $5, $6, $7}'
+        done ;;
+      *) die "usage: edge-ctl peer add|del|list …" ;;
+    esac ;;
+  pubkey) shift; parse "$@"; need_setup; wg show "$(wg_if)" public-key ;;
+  port)   shift; parse "$@"; need_setup; wg show "$(wg_if)" listen-port ;;
+  nat)
+    shift 2 || true; parse "$@"; need_setup
+    vlan=$(vlab-cfg setup "$SETUP" vlan)
+    case "$sub" in
+      off) nft flush chain inet edge "nat-s$SETUP"; echo "NAT off for setup $SETUP" ;;
+      on)  nft flush chain inet edge "nat-s$SETUP"
+           nft add rule inet edge "nat-s$SETUP" oifname "eth2.$vlan" masquerade
+           echo "NAT on for setup $SETUP" ;;
+      *) die "usage: edge-ctl nat on|off --setup N" ;;
+    esac ;;
+  status)
+    echo "mode $MODE"
+    for s in $(vlab-cfg setups | awk '{print $1}'); do
+      echo "setup $s port $(wg show "wg-s$s" listen-port) peers $(wg show "wg-s$s" peers | grep -c . || true)"
+    done ;;
+  *) die "unknown command $cmd (peer, pubkey, port, nat, status)" ;;
+esac

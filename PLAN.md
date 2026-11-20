@@ -167,7 +167,7 @@ vLabZone/containerlab/vlabzone/
     (`topology/gen.py` → `vlabzone-vrf`, `vlabzone-pbr`), both can run side by side (`make up-all`,
     `make test-all`). Both pass E01–E06, E09.
 
-    Findings (details: `containerlab/vlabzone/docs/nodes.md` §3.10):
+    Findings (details: `containerlab/vlabzone/docs/vrf-vs-pbr.md`):
     - PBR: 2 objects per booking (peer + ip rule) vs. 1 in VRF. Missing rule → fail-closed; wrong
       table → two-way access to a foreign setup. VRF only leaks via a setup-level misconfiguration
       (tunnel in wrong VRF + matching forward rule), and then only one-way.

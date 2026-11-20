@@ -22,3 +22,6 @@ containerlab/vlabzone/results/*
 .cache/
 deploy/ansible/**/vault*.yml
 !deploy/ansible/**/vault.example.yml
+
+# containerlab runtime files next to the topologies
+*.clab.yml.annotations.json

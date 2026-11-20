@@ -23,7 +23,7 @@ ip link set eth2 up
 sysctl_set net.ipv4.ip_forward 1
 # net.ipv4.{tcp,udp}_l3mdev_accept stay 0 on purpose: the WireGuard sockets receive on eth1
 # (default VRF) and need nothing from the VRFs. With 1, sockets of the edge itself would also
-# accept traffic arriving from inside a setup (see docs/nodes.md).
+# accept traffic arriving from inside a setup (see docs/lab-vrf.md).
 
 mkdir -p /run/vlab/keys
 case "$EDGE_MODE" in

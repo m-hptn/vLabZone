@@ -192,7 +192,7 @@ E edge-ctl peer del --setup 12 --pubkey "$PUB"; W ip link del wg-s12
 
 ### Lab at a glance
 
-Every node's configuration and why it is needed: [`docs/nodes.md`](docs/nodes.md).
+Every node's configuration and why it is needed, per lab: [`docs/`](docs/README.md) – [VRF lab](docs/lab-vrf.md), [PBR lab](docs/lab-pbr.md), [common nodes](docs/common.md), [VRF vs. PBR](docs/vrf-vs-pbr.md).
 
 
 | Node | Addresses | Purpose |
@@ -218,7 +218,7 @@ containerlab/vlabzone/
 ├── topology/              gen.py → vlabzone-vrf.clab.yml, vlabzone-pbr.clab.yml (generated); smoke.clab.yml
 ├── images/                base + role images (router, edge, workspace, device, serial, mgmt, broker), routeros/build.sh
 ├── config/                setups.yaml (setups, VLANs, devices), corp-fw.nft, users.yaml
-├── docs/                  nodes.md – configuration and rationale per node
+├── docs/                  per-lab documentation: lab-vrf.md, lab-pbr.md, common.md, vrf-vs-pbr.md
 ├── tests/                 pytest suite, one module per experiment
 └── results/               experiment protocols and pcaps (not committed)
 ```

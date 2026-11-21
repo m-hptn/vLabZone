@@ -11,8 +11,7 @@ with the edge, and system switches whose devices are grouped dynamically into se
 | `vlabzone-vrf` | one VRF per setup | `clab-vlabzone-vrf-<node>` | `make up` | [lab-vrf.md](lab-vrf.md) |
 | `vlabzone-pbr` | one `wg0` + policy routing, a gateway per setup | `clab-vlabzone-pbr-<node>` | `make up EDGE_MODE=pbr` | [lab-pbr.md](lab-pbr.md) |
 | `vlabzone-hybrid` | one `wg0` + policy routing into setup VRFs on the edge | `clab-vlabzone-hybrid-<node>` | `make up EDGE_MODE=hybrid` | [lab-hybrid.md](lab-hybrid.md) |
-| `vlabzone-<mode>-ros` | any of the three, with the **MikroTik** (RouterOS CHR) as edge | `clab-vlabzone-<mode>-ros-<node>` | `make up EDGE_IMPL=routeros EDGE_MODE=<mode>` | [consoles-usb.md](consoles-usb.md) | serial consoles (Moxa NPort) and USB (Digi AnywhereUSB) as shared appliances: appliance VLAN, why serial is enforced by the edge and USB by the hub, stand-ins, E14/E26 results |
-| [lab-routeros.md](lab-routeros.md) |
+| `vlabzone-<mode>-ros` | any of the three, with the **MikroTik** (RouterOS CHR) as edge | `clab-vlabzone-<mode>-ros-<node>` | `make up EDGE_IMPL=routeros EDGE_MODE=<mode>` | [lab-routeros.md](lab-routeros.md) |
 
 All labs can run at the same time (`make up-all`).
 
@@ -44,11 +43,13 @@ a different layout:
 | [lab-hybrid.md](lab-hybrid.md) | hybrid lab: why it exists, one request, the hybrid edge and its two safeguards, what can go wrong, what carries over |
 | [common.md](common.md) | nodes that are identical in all labs: corporate firewall, workspaces and the `lab` CLI, alias addresses on the edge, broker, switches (aggregation + system switches, inventory and grouping), devices, management, settings for all nodes |
 | [lab-routeros.md](lab-routeros.md) | the labs with the MikroTik as edge: driver, configuration per mode, differences to Linux, the VRF ping-rule finding, E27 results |
+| [consoles-usb.md](consoles-usb.md) | serial consoles (Moxa NPort) and USB (Digi AnywhereUSB) as shared appliances: appliance VLAN, why serial is enforced by the edge and USB by the hub, stand-ins, E14/E26 results |
 | [tunnel-addresses.md](tunnel-addresses.md) | the tunnel address layout 10.250.\<setup\>.\<user\>: why the setup comes first (one port, static per-setup rules, RouterOS can only match prefixes), limits, where it is used |
 | [vrf-vs-pbr.md](vrf-vs-pbr.md) | comparison of the three modes: test results (E10), RouterOS, advantages, recommendation |
 | [routeros-spike.md](routeros-spike.md) | stage 1b: MikroTik CHR as VRF, PBR and hybrid edge – results, RouterOS configuration, firewall findings |
 
-Concept and experiments: [`idea.md`](../../../idea.md) (German). Roadmap: [`PLAN.md`](../../../PLAN.md).
+Project level (concept, decisions, experiment catalogue, roadmap, glossary): [`docs/`](../../../docs/) at the repository root –
+start with the [repository README](../../../README.md).
 
 ## Conventions
 

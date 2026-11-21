@@ -1,4 +1,4 @@
-"""Write experiment protocols to results/ using the fields from idea.md §8."""
+"""Write experiment protocols to results/ using the fields from docs/concept.md §8."""
 from __future__ import annotations
 
 import datetime as dt

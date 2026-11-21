@@ -22,7 +22,7 @@ $SUDO containerlab deploy -t "$TOPO" --reconfigure
 
 step "no management interface (network-mode: none)"
 if x $A 'ip -o link show eth0' 2>/dev/null; then
-  echo "WARN: eth0 exists in node – network-mode none not honoured, nft fallback needed (idea.md §4.4)"
+  echo "WARN: eth0 exists in node – network-mode none not honoured, nft fallback needed (docs/concept.md §4.4)"
 else
   echo "ok: only lo + eth1"
 fi

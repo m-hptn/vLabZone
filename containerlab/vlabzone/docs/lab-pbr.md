@@ -10,7 +10,7 @@ management) are described in [common.md](common.md). This document covers what m
 
 ## 1. Overview
 
-Modelled on the real setup (`device_arc.drawio`): the edge (later the MikroTik) and the Proxmox nodes hang
+Modelled on the real setup ([`device_arc.drawio`](../../../docs/diagrams/device_arc.drawio)): the edge (later the MikroTik) and the Proxmox nodes hang
 on the aggregation switch, which connects the system switches. A **setup is a group of devices on one system
 switch**; several setups share a switch, and devices on one switch may have the same IP. In this lab the
 per-setup gateways `gw-N` sit on the aggregation switch with one trunk each, the way a VM on a Proxmox node would.

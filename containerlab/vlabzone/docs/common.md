@@ -150,7 +150,7 @@ docker exec clab-vlabzone-$L-ws-std curl -s http://10.20.98.2:8443/healthz
 
 ### 2.2 `lab-agg`, `lab-sys1`, `lab-sys2` – switches
 
-**Role:** Model the real two-tier switching (`device_arc.drawio`): a Lancom **aggregation switch** with the
+**Role:** Model the real two-tier switching ([`device_arc.drawio`](../../../docs/diagrams/device_arc.drawio)): a Lancom **aggregation switch** with the
 edge (MikroTik) and the Proxmox nodes, and **system switches** with the devices. They stand in for the real
 Lancom switches; `sw-port` is what the broker's switch driver will do on them later.
 

@@ -15,7 +15,7 @@ It is computed in one place, `vlab-cfg tunnel-ip <setup> <user>` / `vlab-cfg set
 (`tests/lib/labcfg.py`, `tests/lib/wg.py`).
 
 **Changed on 2026-11-20.** Until then the layout was 10.250.\<user\>.\<setup\>, as in the concept
-([idea.md §4.3](../../../idea.md)). This document explains why it was turned round.
+([concept §4.3](../../../docs/concept.md#43-address-plan-of-the-test-environment)). This document explains why it was turned round.
 
 ---
 

@@ -1,7 +1,7 @@
 """vLabZone broker prototype.
 
 Stage 0 skeleton: only a health endpoint. Bookings, contexts, drivers and the
-reconcile loop are added in stage 3 (see PLAN.md and idea.md §5.7).
+reconcile loop are added in stage 3 (see docs/roadmap.md and docs/concept.md §5.7).
 """
 import os
 

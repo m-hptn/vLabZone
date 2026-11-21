@@ -3,7 +3,7 @@
 #
 #   --stage pre   before provisioning: OS, kernel, modules, resources (docker/containerlab optional)
 #   --stage post  after provisioning: additionally docker, containerlab, loaded modules (default)
-#   --profile     base | scale   (resource thresholds, see idea.md §3.2)
+#   --profile     base | scale   (resource thresholds, see docs/concept.md §3.2)
 #   --routeros    also check KVM for the RouterOS CHR edge
 #   --mgmt-subnet containerlab management subnet to check for overlaps
 #                 (default: $VLAB_MGMT_SUBNET or 172.31.254.0/24)

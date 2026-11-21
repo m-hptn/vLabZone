@@ -2,7 +2,7 @@
 # (fixed hardware) and the initial GROUPING of devices into setups (later owned by the broker).
 # Read by topology/gen.py, the edge, the switches, the PBR gateways and the tests (vlab-cfg).
 #
-# Real world (device_arc.drawio): MikroTik + Proxmox on an aggregation switch, which connects
+# Real world (docs/diagrams/device_arc.drawio): MikroTik + Proxmox on an aggregation switch, which connects
 # the system switches. A setup = a dynamic group of devices on ONE system switch.
 
 edge:

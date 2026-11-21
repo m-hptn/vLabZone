@@ -1,4 +1,4 @@
-# EDGE_MODE=pbr – one WireGuard interface, policy-based routing (idea.md §5.6).
+# EDGE_MODE=pbr – one WireGuard interface, policy-based routing (docs/concept.md §5.6).
 #
 #   wg0        all tunnels, UDP 51820, 10.250.0.1/16
 #   eth2.199   transfer VLAN 10.199.0.1/24 to the setup gateways gw-N (10.199.0.N)

@@ -1,4 +1,4 @@
-# EDGE_MODE=vrf – one VRF per setup (idea.md §5.6, concept §5.4).
+# EDGE_MODE=vrf – one VRF per setup (docs/concept.md §5.6; access concept §5.4).
 #
 # Per setup N (VLAN V, net 192.168.1.0/24):
 #   vrf-sN     VRF with routing table 1000+N

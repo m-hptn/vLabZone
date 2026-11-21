@@ -1,14 +1,13 @@
 # vLabZone – virtual test environment for hardware-pool access
 
-A containerlab-based lab that reproduces the access path
-**workspace → corporate firewall → WireGuard lab edge → VLAN switch → setups with overlapping networks**
-on a single Linux host. Background and experiments: [`../../idea.md`](../../idea.md) (German),
-implementation roadmap: [`../../PLAN.md`](../../PLAN.md).
+The lab of the vLabZone project: it reproduces the access path
+**workspace → corporate firewall → WireGuard lab edge → VLAN switches → setups with overlapping networks**
+on a single Linux host. This README covers **deploying and running** it. What the project is, its concept, decisions
+and experiment status: [repository README](../../README.md) and [`docs/`](../../docs/).
 
-> **Status:** three labs, `vlabzone-vrf`, `vlabzone-pbr` and `vlabzone-hybrid`, one per edge mode, generated from
-> `config/setups.yaml`. All pass E01–E06, E09, E11, E13, E14 (serial consoles), E20 and E26 (USB); E10 compares the modes. Serial
-> consoles and USB devices sit on shared appliances behind the edge ([docs/consoles-usb.md](docs/consoles-usb.md)). Each lab also runs with
-> the MikroTik (RouterOS CHR) as edge, `EDGE_IMPL=routeros` (E27, [docs/lab-routeros.md](docs/lab-routeros.md)).
+> **Status:** three labs, `vlabzone-vrf`, `vlabzone-pbr` and `vlabzone-hybrid`, one per edge mode, each also with the
+> MikroTik (RouterOS CHR) as edge (`EDGE_IMPL=routeros`), all generated from `config/setups.yaml`. Results per
+> experiment and lab: [docs/experiments.md](../../docs/experiments.md).
 
 ---
 
@@ -225,7 +224,7 @@ containerlab/vlabzone/
 ├── topology/              gen.py → vlabzone-{vrf,pbr,hybrid}.clab.yml, views/ (deployment, logical); smoke.clab.yml
 ├── images/                base + role images (router, edge, workspace, device, serial, usbhub, mgmt, broker), routeros/build.sh
 ├── config/                setups.yaml (setups, VLANs, devices), corp-fw.nft, users.yaml
-├── docs/                  per-lab documentation: lab-vrf.md, lab-pbr.md, lab-hybrid.md, common.md, consoles-usb.md, vrf-vs-pbr.md
+├── docs/                  per-lab documentation (index: docs/README.md); project-level docs are in ../../docs/
 ├── tests/                 pytest suite, one module per experiment
 └── results/               experiment protocols and pcaps (not committed)
 ```
@@ -241,5 +240,5 @@ containerlab/vlabzone/
 | preflight: `/dev/kvm missing` with RouterOS enabled | enable VT-x/AMD-V in the BIOS, or nested virtualization on the hypervisor (vSphere: "Expose hardware assisted virtualization"; Proxmox: CPU type `host`) |
 | deploy: `Pool overlaps with other one` | set `VLAB_MGMT_SUBNET` / `vlab_mgmt_subnet` to a free range (`make host-check` shows conflicts) |
 | `make up` hangs at wait-ready | the log of the node that isn't ready is printed; `docker logs clab-vlabzone-<mode>-<node>` |
-| smoke: `WARN: eth0 exists in node` | the containerlab version ignores `network-mode: none` – the nft fallback (idea.md §4.4) is needed |
+| smoke: `WARN: eth0 exists in node` | the containerlab version ignores `network-mode: none` – the nft fallback ([concept §4.4](../../docs/concept.md#44-management-network-and-bypass)) is needed |
 | image build fails behind a proxy | set `vlab_http_proxy` / `vlab_https_proxy` or `vlab_apt_mirror` |

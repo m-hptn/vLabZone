@@ -1,4 +1,4 @@
-# Alias mode (idea.md §5.6, E13) – in every edge mode.
+# Alias mode (docs/concept.md §5.6, E13) – in every edge mode.
 #
 # Setup N is also reachable as 10.200.N.0/24: the edge maps 10.200.N.x -> 192.168.1.x
 # (DNAT, whole prefix) for traffic from setup N's own tunnels (10.250.N.0/24). A CI

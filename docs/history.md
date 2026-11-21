@@ -1,4 +1,10 @@
-# Plan: vLabZone – Docker/containerlab test environment for hardware-pool access
+# Build history: how vLabZone was implemented
+
+> This is the original implementation plan (formerly `PLAN.md`), kept with the notes and findings written after
+> each step. It is a log: paths and numbers are as they were at the time. What is planned next is in
+> [roadmap.md](roadmap.md); the concept it refers to as `idea.md` is now [concept.md](concept.md)
+> (German original: [concept.de.md](concept.de.md)); `device_arc.drawio` is now
+> [diagrams/device_arc.drawio](diagrams/device_arc.drawio).
 
 ## Context
 `idea.md` (German) describes a fully virtual test bed on one Linux host that reproduces the planned

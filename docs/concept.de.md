@@ -1,3 +1,6 @@
+> **Originalfassung (Deutsch), Stand 18.11.2026.** Gepflegt wird die englische Fassung [concept.md](concept.md);
+> diese Datei bleibt als Original erhalten und wird nicht mehr aktualisiert.
+
 # Konzeptvorschlag: Docker-basierte Testumgebung für den Hardware-Pool-Zugriff
 
 *Stand: 18.11.2026 – Ergänzung zum Dokument „Konzept: Zugriff aus vSphere-Arbeitsumgebungen auf den Hardware-Pool (Proxmox)"*

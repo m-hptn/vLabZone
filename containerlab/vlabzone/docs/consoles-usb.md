@@ -5,7 +5,7 @@ Tests: [`test_e14_serial.py`](../tests/test_e14_serial.py), [`test_e26_usb.py`](
 
 In the real environment the devices' serial consoles are cabled to a **Moxa NPort 5600**, and their USB
 interfaces to a **Digi AnywhereUSB 24 Plus**. Neither belongs to a setup: one NPort and one hub serve the
-devices of **all** setups, and the grouping changes. (idea.md planned one access instance per setup,
+devices of **all** setups, and the grouping changes. (The [concept](../../../docs/concept.md#55-serial-access-instance) planned one access instance per setup,
 `acc-12-ser` inside the setup network. That doesn't match this hardware.)
 
 The question is: **how does a booked workspace reach the console and the USB ports of its own devices,

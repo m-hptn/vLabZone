@@ -121,7 +121,8 @@ at all; it only decides which gateway a tunnel's traffic goes to.
 | Interface | Address | Purpose |
 |---|---|---|
 | eth1 | 10.20.99.2/30 | corporate side, receives only WireGuard UDP 51820 |
-| eth2 | – | trunk to lab-agg (VLAN 199 tagged only) |
+| eth2 | – | trunk to lab-agg (VLAN 199 and 197 tagged, no setup VLAN) |
+| eth2.197 | 10.197.0.1/24 | appliance VLAN (NPort, USB hub): `ip rule to 10.197.0.0/24 iif wg0 lookup main` before the booking rules ([consoles-usb.md](consoles-usb.md)) |
 | eth2.199 | 10.199.0.1/24 | transfer VLAN to the gateways gw-N (10.199.0.N) |
 | wg0 | 10.250.0.1/16, UDP **51820** | all tunnels, all setups |
 | eth3 | 10.198.0.2/24 | management (broker, stage 3) |

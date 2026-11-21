@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""usbip-client – userspace USB/IP client for the hub stand-in (no kernel modules needed).
+
+  usbip-client list   <hub ip> <port>           hub ports this client may use (JSON lines)
+  usbip-client import <hub ip> <port> <busid>   import a port and read its product string (JSON);
+                                                exit 1 if the hub refuses
+
+The kernel path (`usbip --tcp-port 18574 attach -r <hub> -b <busid>`, needs vhci-hcd on the
+host) does the same import and then lets the kernel enumerate the device.
+"""
+import json
+import sys
+
+sys.path.insert(0, "/usr/local/lib/vlab")
+import vlab_usbip as u  # noqa: E402
+
+
+def main(argv):
+    if len(argv) < 4 or argv[1] not in ("list", "import"):
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    host, port = argv[2], int(argv[3])
+    try:
+        if argv[1] == "list":
+            for d in u.devlist(host, port):
+                print(json.dumps(d))
+        else:
+            print(json.dumps(u.import_device(host, port, argv[4])))
+    except PermissionError as e:
+        print(f"usbip-client: {e}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"usbip-client: {host}:{port}: {e}", file=sys.stderr)
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

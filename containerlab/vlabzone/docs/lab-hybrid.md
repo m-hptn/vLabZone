@@ -53,7 +53,7 @@ Inside the edge:
              └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The switches are configured as in the VRF lab: the edge trunk carries every setup VLAN, no transfer VLAN,
+The switches are configured as in the VRF lab: the edge trunk carries every setup VLAN (plus VLAN 197 for the serial/USB appliances, route leak into every setup VRF, [consoles-usb.md](consoles-usb.md)), no transfer VLAN,
 no gateways (`vlab-cfg switch-config agg` with `EDGE_MODE=hybrid`).
 
 ### Addressing

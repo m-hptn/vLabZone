@@ -19,19 +19,22 @@
 #   edge-ctl port   --setup N                                   UDP port the workspace must use
 #   edge-ctl nat on|off --setup N                               MASQUERADE on/off (E04, VRF + hybrid)
 #   edge-ctl neigh flush --setup N                              forget the setup's ARP entries (E20, VRF + hybrid)
+#   edge-ctl console list [--setup N]                           setup server-ip tcp-port (serial consoles, E14)
+#   edge-ctl console allow|deny --setup N --device D            give/take device D's console to/from setup N
 #   edge-ctl status                                             mode, setups, peers
 set -euo pipefail
 
 MODE=$(cat /run/vlab/edge-mode 2>/dev/null || echo "${EDGE_MODE:-vrf}")
 die() { echo "edge-ctl: $*" >&2; exit 1; }
 
-SETUP="" PUBKEY="" IP=""
+SETUP="" PUBKEY="" IP="" DEVICE=""
 parse() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --setup)  SETUP=${2:-}; shift; shift || true ;;
       --pubkey) PUBKEY=${2:-}; shift; shift || true ;;
       --ip)     IP=${2:-}; shift; shift || true ;;
+      --device) DEVICE=${2:-}; shift; shift || true ;;
       *) die "unknown argument $1" ;;
     esac
   done
@@ -119,6 +122,35 @@ case "$cmd" in
     [[ $sub == flush ]] || die "usage: edge-ctl neigh flush --setup N"
     ip neigh flush dev "eth2.$(vlab-cfg setup "$SETUP" vlan)"
     echo "neighbours of setup $SETUP flushed" ;;
+  console)
+    # Serial consoles on the shared NPort (docs/consoles-usb.md): set console_sN on the edge holds
+    # <server ip> . <tcp port> of the consoles setup N may reach. Regrouping a device = deny in the
+    # old setup + allow in the new one (the broker does this together with the switch port).
+    shift 2 || true; parse "$@"
+    case "$sub" in
+      list)
+        for s in $(setup_ids); do
+          [[ -z "$SETUP" || "$SETUP" == "$s" ]] || continue
+          nft -j list set inet edge "console_s$s" \
+            | jq -r --arg s "$s" '.nftables[] | select(.set) | .set.elem[]? | .concat | "\($s) \(.[0]) \(.[1])"'
+        done ;;
+      allow|deny)
+        need_setup; [[ -n "$DEVICE" ]] || die "--device missing"
+        consoles=$(vlab-cfg device-consoles "$DEVICE" 2>/dev/null) || die "unknown device $DEVICE"
+        [[ -n "$consoles" ]] || die "device $DEVICE has no serial console"
+        while read -r ip_ port_; do
+          if [[ $sub == allow ]]; then
+            nft add element inet edge "console_s$SETUP" "{ $ip_ . $port_ }"
+          else
+            nft delete element inet edge "console_s$SETUP" "{ $ip_ . $port_ }" 2>/dev/null || true
+            # end a running console session at once (like peer del)
+            conntrack -D -p tcp -d "$ip_" --dport "$port_" -s "$(vlab-cfg setup-prefix "$SETUP")" >/dev/null 2>&1 || true
+          fi
+        done <<<"$consoles"
+        if [[ $sub == allow ]]; then echo "console of $DEVICE allowed for setup $SETUP"
+        else echo "console of $DEVICE denied for setup $SETUP"; fi ;;
+      *) die "usage: edge-ctl console list|allow|deny …" ;;
+    esac ;;
   status)
     echo "mode $MODE"
     if [[ $MODE == vrf ]]; then
@@ -135,5 +167,5 @@ case "$cmd" in
         fi
       done
     fi ;;
-  *) die "unknown command $cmd (peer, pubkey, port, nat, neigh, status)" ;;
+  *) die "unknown command $cmd (peer, pubkey, port, nat, neigh, console, status)" ;;
 esac

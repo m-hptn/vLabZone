@@ -2,7 +2,7 @@
 # hwpool/edge – Linux lab edge.
 #
 #   eth1  corporate side 10.20.99.2/30 (only WireGuard UDP arrives here)
-#   eth2  trunk to lab-sw (one VLAN subinterface per setup)
+#   eth2  trunk to lab-agg (one VLAN subinterface per setup, eth2.197 appliances)
 #   eth3  lab management 10.198.0.2/24
 #
 # EDGE_MODE=vrf (stage 1) | pbr | hybrid (stage 2). Peers are NOT created here –
@@ -34,6 +34,8 @@ case "$EDGE_MODE" in
 esac
 # alias addresses 10.200.N.0/24 for every setup, in every mode (E13)
 . /usr/local/lib/vlab/edge-alias.sh
+# shared serial/USB appliances on VLAN 197, in every mode (E14, E26)
+. /usr/local/lib/vlab/edge-appliances.sh
 
 echo "$EDGE_MODE" > /run/vlab/edge-mode
 mark_ready

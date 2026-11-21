@@ -105,6 +105,12 @@ def build(mode: str, cfg: dict, impl: str = "linux") -> dict:
         for d in sw["devices"]:
             nodes[d["name"]] = node("device", NAME=d["name"], SWITCH=sw["name"], IP=d["ip"], GW=wrong_gw)
             links.append((f"{d['name']}:eth1", f"{name}:{d['port']}"))
+    # shared serial/USB appliances on the aggregation switch, appliance VLAN (docs/consoles-usb.md)
+    apps = cfg.get("appliances", {})
+    for kind, image in (("serial", "serial"), ("usb", "usbhub")):
+        for a in apps.get(kind, []):
+            nodes[a["name"]] = node(image, NAME=a["name"])
+            links.append((f"{a['name']}:eth1", f"lab-{agg['name']}:{a['agg_port']}"))
     if mode == "pbr":
         for s in cfg["setups"]:
             gw = f"gw-{s['id']}"
@@ -168,7 +174,14 @@ def icon(node_id: str) -> str:
         return "switch"
     if node_id.startswith(("lab-edge", "gw-")):
         return "router"
+    if node_id.startswith(("nport", "ausb")):
+        return "server"
     return {"corp-fw": "firewall", "corp-svc": "server", "broker": "controller"}.get(node_id, "client")
+
+
+def appliance_names(cfg: dict) -> list[str]:
+    apps = cfg.get("appliances", {})
+    return [a["name"] for kind in ("serial", "usb") for a in apps.get(kind, [])]
 
 
 class Canvas:
@@ -255,7 +268,12 @@ def view_network(mode: str, cfg: dict) -> Canvas:
     if mode == "pbr":
         for i, s in enumerate(cfg["setups"]):
             c.place(f"gw-{s['id']}", 580 + i * 120, mid - ROW * 2 + 20, "lab-core")
-    c.groups = c.groups[-2:] + c.groups[:-2]          # corporate and lab core first
+    apps = appliance_names(cfg)
+    if apps:
+        c.group("appliances", "Serial/USB appliances – VLAN 197, via the edge", PURPLE)
+        for i, n in enumerate(apps):
+            c.place(n, 460 + i * 240, mid + ROW * 3 + 60, "appliances")
+    c.groups = c.groups[-3:] + c.groups[:-3] if apps else c.groups[-2:] + c.groups[:-2]
     return c
 
 
@@ -273,15 +291,18 @@ def view_deployment(mode: str, cfg: dict) -> Canvas:
     c.place("corp-svc", 340, mid + ROW * 2, "corporate")
     c.group("mikrotik", "MikroTik router – lab edge", RED)
     c.place("lab-edge", 680, mid - ROW * 2, "mikrotik")
-    c.group("proxmox", "Proxmox cluster – broker, setup gateways, later access instances", PURPLE)
+    c.group("proxmox", "Proxmox cluster – broker, setup gateways", PURPLE)
     on_proxmox = ["broker"] + ([f"gw-{s['id']}" for s in cfg["setups"]] if mode == "pbr" else [])
     for i, n in enumerate(on_proxmox):
         c.place(n, 680 + (i % 2) * 140, mid + 40 + (i // 2) * ROW, "proxmox")
-    c.text("proxmox-later", "later: serial/USB access instances per setup", 680,
-           mid + 40 + ((len(on_proxmox) + 1) // 2) * ROW, PURPLE)
     c.group("aggregation", "Lancom aggregation switch (+ management VLAN)", AMBER)
     c.place(f"lab-{cfg['aggregation']['name']}", 1080, mid, "aggregation")
     c.place("lab-mgmt", 1080, mid + ROW * 2, "aggregation")
+    apps = appliance_names(cfg)
+    if apps:
+        c.group("appliances", "Moxa NPort 5600 (serial) · Digi AnywhereUSB 24 Plus (USB)", GREY)
+        for i, n in enumerate(apps):
+            c.place(n, 960 + i * 160, mid + ROW * 3 + 60, "appliances")
     c.groups = c.groups[len(cfg["switches"]):] + c.groups[:len(cfg["switches"])]
     return c
 
@@ -332,6 +353,11 @@ def view_logical(mode: str, cfg: dict) -> Canvas:
     agg = cfg["aggregation"]["name"]
     for i, n in enumerate([f"lab-{agg}"] + [f"lab-{sw['name']}" for sw in cfg["switches"]] + ["lab-mgmt"]):
         c.place(n, X_EDGE + i * 160, y + 40, "transport")
+    apps = appliance_names(cfg)
+    if apps:
+        c.group("appliances", "Shared serial/USB appliances – per setup only its own ports", PURPLE)
+        for i, n in enumerate(apps):
+            c.place(n, X_EDGE + i * 160, y + 40 + ROW + 120, "appliances")
     order = ["corporate", "edge"]
     c.groups.sort(key=lambda g: order.index(g["id"]) if g["id"] in order else len(order))
     return c

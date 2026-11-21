@@ -131,6 +131,14 @@ topology:
         SWITCH: sys2
         IP: 192.168.1.20/24
         GW: 192.168.1.1
+    nport1:
+      image: hwpool/serial:latest
+      env:
+        NAME: nport1
+    ausb1:
+      image: hwpool/usbhub:latest
+      env:
+        NAME: ausb1
     lab-mgmt:
       image: hwpool/mgmt:latest
       env:
@@ -187,6 +195,12 @@ topology:
   - endpoints:
     - sys2-dev4:eth1
     - lab-sys2:eth14
+  - endpoints:
+    - nport1:eth1
+    - lab-agg:eth31
+  - endpoints:
+    - ausb1:eth1
+    - lab-agg:eth32
   - endpoints:
     - lab-edge:eth3
     - lab-mgmt:eth1

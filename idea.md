@@ -243,6 +243,13 @@ Jedes Gerät liefert eine **eindeutige Identität**, damit Tests prüfen können
 
 `acc-12-ser` erzeugt mit `socat` ein virtuelles serielles Gerät, hinter dem ein Skript eine einfache Gerätekonsole spielt (`login:`, `show version`, `reboot`). `ser2net` stellt es per RFC 2217 auf Port 3001 bereit. Der Test-Client ist `socat` bzw. `pyserial` mit `rfc2217://192.168.1.30:3001`.
 
+> **Umgesetzt anders (Stufe 2, Schritt 13):** In der realen Umgebung hängen die seriellen Konsolen an einem
+> Moxa NPort 5600 und die USB-Geräte an einem Digi AnywhereUSB 24 Plus – je ein gemeinsames Gerät für alle
+> Setups. Im Lab stehen dafür `nport1` (RFC 2217, Port 4000+K) und `ausb1` (USB/IP als Ersatz, ein TCP-Port)
+> in einem eigenen VLAN 197 hinter der Edge, ohne NAT. Seriell trennt die Edge (pro Setup nur die Konsolen-Ports
+> seiner Geräte), USB der Hub (Gruppen pro Setup, Mitglieder pro Buchung). Details:
+> `containerlab/vlabzone/docs/consoles-usb.md` (E14, E26).
+
 ### 5.6 Lab-Edge
 
 Ein Entrypoint liest `setups.yaml` und baut den gewählten Modus:

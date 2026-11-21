@@ -97,6 +97,8 @@ Stage 2 has the part that works on existing contexts; `lab connect|disconnect` f
 | `lab list` | every context on the workspace: setup (from the tunnel address), mode (desktop = main namespace, power = namespace `setupN`), interface, address, last handshake |
 | `lab enter 12` | shell inside namespace `setup12` with prompt `[setup12]`; only setup 12 is reachable there |
 | `lab enter 12 -- CMD` | one command inside the namespace (used by E11) |
+| `lab console 12 sys1-dev1` | serial console of a device of setup 12 on the shared NPort (RFC 2217, miniterm), in the setup's context ([consoles-usb.md](consoles-usb.md)); refuses devices of other setups |
+| `lab usb list 12` / `lab usb attach 12 1-1` / `lab usb detach <port>` | USB ports the setup's hub group offers / attach one as a local USB device (kernel usbip, needs `vhci-hcd` on the host) |
 
 ```text
 $ docker exec clab-vlabzone-hybrid-ws-power lab list          # during E11
@@ -280,6 +282,14 @@ E13 result (every device of setups 12 and 7 at once from `ws-ci`, one namespace)
 | 10.200.7.20 | sys1-dev3 |
 | 10.200.7.22 | sys1-dev4 |
 
+### 2.6 `nport1`, `ausb1` – shared serial and USB appliances (all modes)
+
+A serial device server (stand-in for the Moxa NPort 5600) and a USB hub (stand-in for the Digi AnywhereUSB
+24 Plus) on their own VLAN 197 (10.197.0.0/24) at the aggregation switch, reached only through the edge
+(`eth2.197`, script [`edge-appliances.sh`](../images/edge/edge-appliances.sh), loaded after the alias script).
+Serial access is enforced by the edge (per setup only its devices' console ports), USB access by the hub's
+groups. Everything about them: [consoles-usb.md](consoles-usb.md).
+
 ---
 
 ## 3. Settings that apply to all nodes
@@ -314,6 +324,8 @@ E13 result (every device of setups 12 and 7 at once from `ws-ci`, one namespace)
 8. Devices only see the setup gateway address as the client; user attribution must come from the broker's audit log.
 9. Alias addresses: per setup a DNAT `10.200.N.0/24 → setup network`, only for the setup's own tunnel prefix.
 10. Workspaces: power mode = one namespace per setup (`lab enter`), alias mode = `10.200.N.0/24` routes.
+11. Serial and USB appliances on their own VLAN behind the edge, no NAT; consoles per setup on the edge, USB
+    groups and client IDs on the hub, both kept in step by the broker ([consoles-usb.md](consoles-usb.md#carried-over-to-the-real-environment)).
 
 Mode-specific items: [lab-vrf.md](lab-vrf.md#carried-over-to-the-real-environment),
 [lab-pbr.md](lab-pbr.md#carried-over-to-the-real-environment) and

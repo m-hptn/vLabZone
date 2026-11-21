@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""hub-ctl – manage the USB hub's groups (stand-in for the AnywhereUSB group configuration that
+the broker drives over the hub's management API; docs/consoles-usb.md).
+
+  hub-ctl init                              groups from setups.yaml (initial grouping), no members
+  hub-ctl group list                        <setup> <hub ports>
+  hub-ctl group set <setup> <p1,p2|none>    hub ports of a setup (regrouping)
+  hub-ctl client add <tunnel-ip> --group N  allow a booking's client into group N
+  hub-ctl client del <tunnel-ip> [--group N] revoke (all groups without --group); sessions end at once
+  hub-ctl client list                       <setup> <client>
+"""
+import fcntl
+import json
+import os
+import subprocess
+import sys
+
+STATE = os.environ.get("HUB_STATE", "/run/vlab/hub.json")
+HUB = os.environ.get("HUB_NAME", "ausb1")
+
+
+def die(msg):
+    sys.exit(f"hub-ctl: {msg}")
+
+
+def load():
+    with open(STATE) as fh:
+        return json.load(fh)
+
+
+def save(st):
+    tmp = STATE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(st, fh, indent=1, sort_keys=True)
+    os.replace(tmp, STATE)
+
+
+def init():
+    st = {"groups": {}, "members": {}, "devices": {}}
+    out = subprocess.run(["vlab-cfg", "usb-hub", HUB], check=True, capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        port, dev, sid = line.split()
+        if dev != "-":
+            st["devices"][port] = dev
+        if sid != "-":
+            st["groups"].setdefault(sid, []).append(int(port))
+    for sid in st["groups"]:
+        st["members"][sid] = []
+    save(st)
+    return st
+
+
+def main(argv):
+    if len(argv) < 2:
+        print(__doc__.strip()); sys.exit(2)
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE + ".lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        if argv[1] == "init":
+            st = init()
+            print(f"groups {json.dumps(st['groups'], sort_keys=True)}")
+            return
+        st = load()
+        cmd, sub, rest = argv[1], (argv[2] if len(argv) > 2 else "list"), argv[3:]
+        group = None
+        if "--group" in rest:
+            i = rest.index("--group")
+            group = rest[i + 1] if i + 1 < len(rest) else die("--group needs a value")
+            rest = rest[:i] + rest[i + 2:]
+        if cmd == "group" and sub == "list":
+            for sid, ports in sorted(st["groups"].items(), key=lambda kv: int(kv[0])):
+                print(sid, ",".join(map(str, ports)) or "none")
+        elif cmd == "group" and sub == "set":
+            if len(rest) != 2:
+                die("usage: hub-ctl group set <setup> <p1,p2|none>")
+            sid, ports = rest
+            st["groups"][sid] = [] if ports == "none" else sorted({int(p) for p in ports.split(",")})
+            st["members"].setdefault(sid, [])
+            save(st)
+            print(f"group {sid}: ports {ports}")
+        elif cmd == "client" and sub == "list":
+            for sid, members in sorted(st["members"].items(), key=lambda kv: int(kv[0])):
+                for m in members:
+                    print(sid, m)
+        elif cmd == "client" and sub in ("add", "del"):
+            if len(rest) != 1:
+                die(f"usage: hub-ctl client {sub} <tunnel-ip> [--group N]")
+            client = rest[0]
+            if sub == "add":
+                if group is None:
+                    die("--group missing")
+                if group not in st["groups"]:
+                    die(f"unknown group {group}")
+                if client not in st["members"].setdefault(group, []):
+                    st["members"][group].append(client)
+                print(f"client {client} added to group {group}")
+            else:
+                for sid, members in st["members"].items():
+                    if (group is None or sid == group) and client in members:
+                        members.remove(client)
+                print(f"client {client} removed from {'group ' + group if group else 'all groups'}")
+            save(st)
+        else:
+            die(f"unknown command {' '.join(argv[1:])}")
+
+
+if __name__ == "__main__":
+    main(sys.argv)

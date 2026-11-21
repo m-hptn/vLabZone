@@ -106,7 +106,8 @@ the MikroTik, connected to the aggregation switch.
 | Interface | Address | Purpose |
 |---|---|---|
 | eth1 | 10.20.99.2/30 | corporate side, receives only WireGuard UDP |
-| eth2 | – | trunk to lab-agg (VLAN 112, 107, 105 tagged) |
+| eth2 | – | trunk to lab-agg (VLAN 112, 107, 105 tagged, and 197 for the appliances) |
+| eth2.197 | 10.197.0.1/24 | appliance VLAN (NPort, USB hub), default VRF; route leak into every setup table, `10.250.N.0/24 dev wg-sN` in main for the replies ([consoles-usb.md](consoles-usb.md)) |
 | eth2.112 / .107 / .105 (in vrf-s12 / -s7 / -s5) | 192.168.1.254/24 | gateway in each setup, **same address** everywhere |
 | wg-s12 / wg-s7 / wg-s5 (in the same VRFs) | 10.250.0.1/16, UDP 51812 / 51807 / 51805 | tunnels to each setup |
 | eth3 | 10.198.0.2/24 | management (broker, stage 3) |

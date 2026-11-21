@@ -11,6 +11,14 @@
   vlab-cfg setup-prefix <id>      -> tunnel prefix of setup <id>: 10.250.<id>.0/24
   vlab-cfg tunnel-ip <id> <user>  -> tunnel address of <user> in setup <id>: 10.250.<id>.<user>
   vlab-cfg alias-prefix <id>      -> alias network of setup <id>: 10.200.<id>.0/24
+  vlab-cfg appliances             -> "<vlan> <net> <edge_ip>" of the appliance VLAN (docs/consoles-usb.md)
+  vlab-cfg appliance <name> <key> -> one field of an appliance (nport1 ip)
+  vlab-cfg consoles <id>          -> "<device> <server> <ip> <tcp port>" per serial port of setup <id>'s devices
+  vlab-cfg usb-ports <id>         -> "<device> <hub> <ip> <hub port>" per USB port of setup <id>'s devices
+  vlab-cfg device-consoles <dev>  -> "<server ip> <tcp port>" per TCP port of device <dev>'s serial console
+  vlab-cfg serial-server <name>   -> "<port> <tcp port> <device|->" per port of serial server <name>
+  vlab-cfg usb-hubs               -> "<name> <ip> <tcp port>" per USB hub
+  vlab-cfg usb-hub <name>         -> "<port> <device|-> <setup|->" per port of USB hub <name>
   vlab-cfg get edge.wg_port_base  -> scalar value
   vlab-cfg setup <id> <key>       -> value of one setup field
 
@@ -93,6 +101,78 @@ def gw_ip(cfg: dict, sid) -> str:
     return str(ipaddress.ip_network(cfg["edge"]["transfer"]["net"]).network_address + int(sid))
 
 
+# --- shared access appliances: serial device servers and USB hubs (docs/consoles-usb.md) -----
+def appliance(cfg: dict, name: str) -> dict:
+    for kind in ("serial", "usb"):
+        for a in cfg.get("appliances", {}).get(kind, []):
+            if a["name"] == name:
+                return {**a, "kind": kind}
+    raise KeyError(name)
+
+
+def serial_tcp_ports(server: dict, port: int) -> list[int]:
+    """TCP ports of serial port <port> on an NPort, by operation mode: RFC 2217 / TCP server use
+    one port (base_port + port); Real COM uses a data port 950+port and a command port 966+port."""
+    if server["mode"] == "realcom":
+        return [950 + port, 966 + port]
+    return [server["base_port"] + port]
+
+
+def all_devices(cfg: dict) -> list[dict]:
+    return [{**d, "switch": sw["name"]} for sw in cfg["switches"] for d in sw["devices"]]
+
+
+def device_consoles(cfg: dict, name: str) -> list[tuple[str, int]]:
+    """(server ip, tcp port) of device <name>'s serial console, [] if it has none."""
+    d = device(cfg, name)
+    if "serial" not in d:
+        return []
+    srv = appliance(cfg, d["serial"]["server"])
+    return [(srv["ip"], p) for p in serial_tcp_ports(srv, d["serial"]["port"])]
+
+
+def consoles(cfg: dict, sid) -> list[tuple[str, str, str, int]]:
+    """(device, server, server ip, tcp port) for every serial port of setup <sid>'s devices."""
+    out = []
+    for name in setup(cfg, sid)["devices"]:
+        d = device(cfg, name)
+        if "serial" in d:
+            srv = appliance(cfg, d["serial"]["server"])
+            out += [(name, srv["name"], srv["ip"], p) for p in serial_tcp_ports(srv, d["serial"]["port"])]
+    return out
+
+
+def usb_ports(cfg: dict, sid) -> list[tuple[str, str, str, int]]:
+    """(device, hub, hub ip, hub port) for every USB port of setup <sid>'s devices."""
+    out = []
+    for name in setup(cfg, sid)["devices"]:
+        d = device(cfg, name)
+        if "usb" in d:
+            hub = appliance(cfg, d["usb"]["hub"])
+            out.append((name, hub["name"], hub["ip"], d["usb"]["port"]))
+    return out
+
+
+def serial_server(cfg: dict, name: str) -> list[tuple[int, int, str | None]]:
+    """(port, first tcp port, device or None) for every port of serial server <name>."""
+    srv = appliance(cfg, name)
+    cabled = {d["serial"]["port"]: d["name"] for d in all_devices(cfg)
+              if d.get("serial", {}).get("server") == name}
+    return [(k, serial_tcp_ports(srv, k)[0], cabled.get(k)) for k in range(1, srv["ports"] + 1)]
+
+
+def usb_hub(cfg: dict, name: str) -> list[tuple[int, str | None, int | None]]:
+    """(port, device or None, setup id or None) for every port of USB hub <name> (initial grouping)."""
+    hub = appliance(cfg, name)
+    cabled = {d["usb"]["port"]: d["name"] for d in all_devices(cfg) if d.get("usb", {}).get("hub") == name}
+    out = []
+    for k in range(1, hub["ports"] + 1):
+        dev = cabled.get(k)
+        s = setup_of(cfg, dev) if dev else None
+        out.append((k, dev, s["id"] if s else None))
+    return out
+
+
 def switch_config(cfg: dict, name: str, mode: str) -> list[tuple]:
     """Ports of a switch: ("mgmt", port, ip), ("trunk", port, [vlans]), ("access", port, vlan|None, device)."""
     transfer = cfg["edge"]["transfer"]["vlan"]
@@ -102,7 +182,13 @@ def switch_config(cfg: dict, name: str, mode: str) -> list[tuple]:
         out.append(("mgmt", "eth2", agg["mgmt_ip"]))
         # VRF/hybrid: the edge is the gateway in every setup. PBR: the edge only talks to the gateways.
         edge_vlans = [transfer] if mode == "pbr" else [s["vlan"] for s in cfg["setups"]]
+        apps = cfg.get("appliances")
+        if apps:
+            edge_vlans.append(apps["vlan"])          # serial/USB appliances, in every mode
         out.append(("trunk", agg["edge_port"], edge_vlans))
+        if apps:
+            for a in apps.get("serial", []) + apps.get("usb", []):
+                out.append(("access", a["agg_port"], apps["vlan"], a["name"]))
         for sw in cfg["switches"]:
             # only the VLANs of the setups that live on that system switch
             out.append(("trunk", sw["agg_port"], [s["vlan"] for s in cfg["setups"] if s["switch"] == sw["name"]]))
@@ -145,6 +231,29 @@ def main(argv: list[str]) -> None:
         print(alias_prefix(cfg, argv[2]))
     elif cmd == "tunnel-ip":
         print(tunnel_ip(cfg, argv[2], argv[3]))
+    elif cmd == "appliances":
+        a = cfg["appliances"]
+        print(a["vlan"], a["net"], a["edge_ip"])
+    elif cmd == "appliance":
+        print(appliance(cfg, argv[2])[argv[3]])
+    elif cmd == "consoles":
+        for row in consoles(cfg, argv[2]):
+            print(*row)
+    elif cmd == "device-consoles":
+        for row in device_consoles(cfg, argv[2]):
+            print(*row)
+    elif cmd == "usb-ports":
+        for row in usb_ports(cfg, argv[2]):
+            print(*row)
+    elif cmd == "serial-server":
+        for k, tcp, dev in serial_server(cfg, argv[2]):
+            print(k, tcp, dev or "-")
+    elif cmd == "usb-hubs":
+        for h in cfg["appliances"].get("usb", []):
+            print(h["name"], h["ip"], h["tcp_port"])
+    elif cmd == "usb-hub":
+        for k, dev, sid in usb_hub(cfg, argv[2]):
+            print(k, dev or "-", sid or "-")
     elif cmd == "get":
         val = cfg
         for part in argv[2].split("."):

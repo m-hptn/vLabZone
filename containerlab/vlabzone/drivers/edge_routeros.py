@@ -162,6 +162,7 @@ class Edge:
                  comment=f"{TAG} corporate networks only, no default route")
         getattr(self, f"_configure_{self.mode}")()
         self._alias()
+        self._appliances()
         self._firewall()
         # the identity marks the router as configured (Edge.configured, test fixtures)
         requests.post(f"{r.base}/system/identity/set", auth=AUTH, json={"name": self.identity()}, timeout=15)
@@ -221,6 +222,50 @@ class Edge:
                                                 "dst-address": VC.alias_prefix(self.cfg, s["id"])},
                             action="netmap", **{"to-addresses": s["net"]}, comment=f"{TAG} alias setup {s['id']}")
 
+    def _appliances(self) -> None:
+        """Shared serial/USB appliances on their own VLAN (docs/consoles-usb.md), no NAT towards them."""
+        a = self.cfg["appliances"]
+        vlan = f"vlan{a['vlan']}"
+        self.ros.ensure("interface/vlan", {"name": vlan}, **{"vlan-id": str(a["vlan"]), "interface": TRUNK})
+        self.ros.ensure("ip/address", {"address": f"{a['edge_ip']}/{a['net'].split('/')[1]}", "interface": vlan})
+        for s in self.setups():
+            sid = s["id"]
+            if self.mode in ("vrf", "hybrid"):
+                self._wait_table(f"vrf-s{sid}")              # VRF tables appear asynchronously
+                # route leak: the appliance VLAN is in main, the setup's tunnels in vrf-sN
+                self.ros.ensure("ip/route", {"dst-address": a["net"], "routing-table": f"vrf-s{sid}"},
+                                gateway=f"{vlan}@main", comment=f"{TAG} setup {sid} -> appliances")
+            if self.mode == "vrf":
+                # replies: main must know which VRF holds 10.250.N.0/24 (one /24 per setup)
+                self.ros.ensure("ip/route", {"dst-address": VC.setup_prefix(self.cfg, sid), "routing-table": "main"},
+                                gateway=f"wg-s{sid}@vrf-s{sid}", comment=f"{TAG} appliances -> tunnels of setup {sid}")
+        if self.mode == "pbr":
+            # before the booking rules (they are appended later)
+            self.ros.ensure("routing/rule", {"dst-address": a["net"], "interface": "wg0"},
+                            table="main", action="lookup", comment=f"{TAG} tunnels -> appliances")
+
+    def _tunnel_in(self, sid) -> str:
+        return f"vrf-s{sid}" if self.mode == "vrf" else "wg0"
+
+    def _console_rule(self, sid, ip: str, port: int) -> dict:
+        return {"in-interface": self._tunnel_in(sid), "src-address": VC.setup_prefix(self.cfg, sid),
+                "out-interface": f"vlan{self.cfg['appliances']['vlan']}", "dst-address": ip, "protocol": "tcp",
+                "dst-port": str(port), "action": "accept", "comment": f"console s{sid} {ip}:{port}"}
+
+    def appliance_rules(self) -> list:
+        """Serial: one rule per console of the setup's devices (network-enforced). USB: every setup may
+        reach the hub's single port; the hub's groups decide which ports (appliance-enforced)."""
+        f = []
+        vlan = f"vlan{self.cfg['appliances']['vlan']}"
+        for s in self.setups():
+            sid = s["id"]
+            f += [("forward", self._console_rule(sid, ip, port)) for _d, _n, ip, port in VC.consoles(self.cfg, sid)]
+            f += [("forward", {"in-interface": self._tunnel_in(sid), "src-address": VC.setup_prefix(self.cfg, sid),
+                               "out-interface": vlan, "dst-address": h["ip"], "protocol": "tcp",
+                               "dst-port": str(h["tcp_port"]), "action": "accept", "comment": f"usb s{sid} {h['name']}"})
+                  for h in self.cfg["appliances"].get("usb", [])]
+        return f
+
     def firewall_rules(self) -> tuple[list, list]:
         """(mangle, filter) – rebuilt from scratch by configure()."""
         mangle, f = [], []
@@ -244,6 +289,7 @@ class Edge:
         f += [("input", {"action": "drop", "comment": "input everything else"}),
               ("forward", {"connection-state": "established,related", "action": "accept"}),
               ("forward", {"connection-state": "invalid", "action": "drop"})]
+        f += self.appliance_rules()
         for s in self.setups():
             sid, prefix = s["id"], VC.setup_prefix(self.cfg, s["id"])
             if self.mode == "vrf":
@@ -366,6 +412,41 @@ class Edge:
                 self.ros.delete("ip/arp", a[".id"])
         return f"neighbours of setup {sid} flushed"
 
+    def console_list(self, sid=None) -> str:
+        out = []
+        for r in self.ros.get("ip/firewall/filter"):
+            m = re.fullmatch(rf"{TAG} console s(\d+) ([\d.]+):(\d+)", r.get("comment", ""))
+            if m and (sid is None or str(sid) == m.group(1)):
+                out.append(" ".join(m.groups()))
+        return "\n".join(out)
+
+    def console(self, sid, device: str, allow: bool) -> str:
+        """Give device's serial console to setup sid, or take it away (regrouping, E14)."""
+        self.setup(sid)
+        try:
+            consoles = VC.device_consoles(self.cfg, device)
+        except KeyError:
+            raise EdgeError(f"unknown device {device}") from None
+        if not consoles:
+            raise EdgeError(f"device {device} has no serial console")
+        rules = self.ros.get("ip/firewall/filter")
+        drop = next(r for r in rules if r.get("comment") == f"{TAG} forward everything else")
+        for ip, port in consoles:
+            rule = self._console_rule(sid, ip, port)
+            rule["comment"] = f"{TAG} {rule['comment']}"
+            have = [r for r in rules if r.get("comment") == rule["comment"]]
+            if allow and not have:
+                self.ros.put("ip/firewall/filter", chain="forward", **rule, **{"place-before": drop[".id"]})
+            if not allow:
+                for r in have:
+                    self.ros.delete("ip/firewall/filter", r[".id"])
+                prefix = VC.setup_prefix(self.cfg, sid).rsplit(".", 1)[0] + "."
+                for c in self.ros.get("ip/firewall/connection"):        # end a running session at once
+                    if c.get("dst-address") == f"{ip}:{port}" and c.get("src-address", "").startswith(prefix):
+                        self.ros.delete("ip/firewall/connection", c[".id"])
+        time.sleep(3)                                                  # filter changes apply after ~3 s
+        return f"console of {device} {'allowed for' if allow else 'denied for'} setup {sid}"
+
     def status(self) -> str:
         peers = self.ros.get("interface/wireguard/peers")
         out = [f"mode {self.mode} (RouterOS {self.ros.get('system/resource')['version']})"]
@@ -384,6 +465,7 @@ def edge_ctl(edge: Edge, argv: list[str]) -> str:
     ap.add_argument("--setup")
     ap.add_argument("--pubkey")
     ap.add_argument("--ip")
+    ap.add_argument("--device")
     a = ap.parse_args(argv)
     if a.cmd == "peer" and a.sub == "add":
         return edge.peer_add(a.setup, a.pubkey, a.ip)
@@ -399,6 +481,12 @@ def edge_ctl(edge: Edge, argv: list[str]) -> str:
         return edge.nat(a.setup, a.sub == "on")
     if a.cmd == "neigh" and a.sub == "flush":
         return edge.neigh_flush(a.setup)
+    if a.cmd == "console" and a.sub == "list":
+        return edge.console_list(a.setup)
+    if a.cmd == "console" and a.sub in ("allow", "deny"):
+        if not a.device:
+            raise EdgeError("--device missing")
+        return edge.console(a.setup, a.device, a.sub == "allow")
     if a.cmd == "status":
         return edge.status()
     raise EdgeError(f"unknown command {' '.join(argv)}")

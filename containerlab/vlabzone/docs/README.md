@@ -11,7 +11,8 @@ with the edge, and system switches whose devices are grouped dynamically into se
 | `vlabzone-vrf` | one VRF per setup | `clab-vlabzone-vrf-<node>` | `make up` | [lab-vrf.md](lab-vrf.md) |
 | `vlabzone-pbr` | one `wg0` + policy routing, a gateway per setup | `clab-vlabzone-pbr-<node>` | `make up EDGE_MODE=pbr` | [lab-pbr.md](lab-pbr.md) |
 | `vlabzone-hybrid` | one `wg0` + policy routing into setup VRFs on the edge | `clab-vlabzone-hybrid-<node>` | `make up EDGE_MODE=hybrid` | [lab-hybrid.md](lab-hybrid.md) |
-| `vlabzone-<mode>-ros` | any of the three, with the **MikroTik** (RouterOS CHR) as edge | `clab-vlabzone-<mode>-ros-<node>` | `make up EDGE_IMPL=routeros EDGE_MODE=<mode>` | [lab-routeros.md](lab-routeros.md) |
+| `vlabzone-<mode>-ros` | any of the three, with the **MikroTik** (RouterOS CHR) as edge | `clab-vlabzone-<mode>-ros-<node>` | `make up EDGE_IMPL=routeros EDGE_MODE=<mode>` | [consoles-usb.md](consoles-usb.md) | serial consoles (Moxa NPort) and USB (Digi AnywhereUSB) as shared appliances: appliance VLAN, why serial is enforced by the edge and USB by the hub, stand-ins, E14/E26 results |
+| [lab-routeros.md](lab-routeros.md) |
 
 All labs can run at the same time (`make up-all`).
 
@@ -23,7 +24,7 @@ a different layout:
 | View | File (`vrf`, `pbr` or `hybrid`) | Shows |
 |---|---|---|
 | **Network** | `topology/vlabzone-vrf.clab.yml` | the switching: corporate → edge → aggregation switch → system switches → devices, one group per system switch with its current setups |
-| **Deployment** | `topology/views/vlabzone-vrf.deployment.clab.yml` | which real hardware/platform runs which node: vSphere (workspaces), corporate network, MikroTik (edge), Proxmox cluster (broker, PBR gateways, later access instances), Lancom aggregation switch, one rack per system switch |
+| **Deployment** | `topology/views/vlabzone-vrf.deployment.clab.yml` | which real hardware/platform runs which node: vSphere (workspaces), corporate network, MikroTik (edge), Proxmox cluster (broker, PBR gateways), Lancom aggregation switch, serial/USB appliances, one rack per system switch |
 | **Logical** | `topology/views/vlabzone-vrf.logical.clab.yml` | the access path left to right: workspaces → corporate firewall → edge → **gateway** → setup. One lane per setup; in the PBR lab `gw-N` sits in the lane, in the VRF and hybrid labs a label names the edge VRF that acts as gateway. Switches are shown separately as "transport", ungrouped devices in their own group |
 
 - The files in `topology/views/` are generated copies of the topology with the same lab name: **view only,

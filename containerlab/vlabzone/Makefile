@@ -34,7 +34,7 @@ VENV  := .venv
 PY    := $(VENV)/bin/python
 
 # Build order matters: every role image is built FROM hwpool/base
-IMAGES := router edge workspace device serial mgmt broker
+IMAGES := router edge workspace device serial usbhub mgmt broker
 
 BUILD_ARGS := --build-arg VLAB_VERSION=$(VERSION) \
               --build-arg APT_MIRROR=$(APT_MIRROR) \

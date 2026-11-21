@@ -99,6 +99,28 @@ What `configure` creates (read back from the running labs; equivalent CLI). Comm
 /routing rule add src-address=10.250.12.1/32 interface=wg0 table=s12 action=lookup-only-in-table
 ```
 
+**Serial/USB appliances, all modes** ([consoles-usb.md](consoles-usb.md)), read back from `vlabzone-vrf-ros`:
+
+```routeros
+/interface vlan add name=vlan197 vlan-id=197 interface=ether3
+/ip address add address=10.197.0.1/24 interface=vlan197
+# VRF + hybrid: route leak into each setup table (the driver waits for the asynchronous VRF table first)
+/ip route add dst-address=10.197.0.0/24 gateway=vlan197@main routing-table=vrf-s12
+# VRF only: replies to the setup's tunnels, into its VRF
+/ip route add dst-address=10.250.12.0/24 gateway=wg-s12@vrf-s12
+# PBR only: before the booking rules
+/routing rule add dst-address=10.197.0.0/24 interface=wg0 action=lookup table=main
+# one forward rule per console of the setup's devices (no ip.port sets on RouterOS), one per USB hub
+/ip firewall filter add chain=forward in-interface=vrf-s12 src-address=10.250.12.0/24 out-interface=vlan197 \
+    dst-address=10.197.0.10 protocol=tcp dst-port=4001 action=accept comment="vlab: console s12 10.197.0.10:4001"
+/ip firewall filter add chain=forward in-interface=vrf-s12 src-address=10.250.12.0/24 out-interface=vlan197 \
+    dst-address=10.197.0.11 protocol=tcp dst-port=18574 action=accept comment="vlab: usb s12 ausb1"
+```
+
+`out-interface=vlan197` works in the filter because vlan197 isn't a VRF member. In VRF mode `in-interface=vrf-sN`
+also matches the setup VLAN, so the source prefix keeps the devices out again (E14c). `edge-ctl console allow`
+inserts a rule before the final drop, and `deny` removes it and the console's connections.
+
 **Firewall, all modes** (input; forward as above, then drop):
 
 ```routeros
@@ -151,15 +173,15 @@ The forward rules got the same source prefix.
 
 ## 5. Results
 
-`make test EDGE_IMPL=routeros EDGE_MODE=<mode>` (E01–E06, E09, E10 where possible, E11, E13, E20, E27):
+`make test EDGE_IMPL=routeros EDGE_MODE=<mode>` (E01–E06, E09, E10 where possible, E11, E13, E14, E20, E26, E27):
 
 | Lab | Passed | Skipped | Failed |
 |---|---|---|---|
-| `vlabzone-vrf-ros` | 67 | 12 | 0 |
-| `vlabzone-pbr-ros` | 72 | 10 | 0 |
-| `vlabzone-hybrid-ros` | 69 | 10 | 0 |
+| `vlabzone-vrf-ros` | 80 | 13 | 0 |
+| `vlabzone-pbr-ros` | 85 | 11 | 0 |
+| `vlabzone-hybrid-ros` | 82 | 11 | 0 |
 
-Skipped: E05 management interface of lab-edge (section 3), the E10 cases that change Linux internals, the
+Skipped: E05 management interface of lab-edge (section 3), E26e kernel `usbip attach` (vhci-hcd), the E10 cases that change Linux internals, the
 E10/E27 cases of the other modes, and the RouterOS-only check of E00.
 
 **E27: E10's misconfigurations on RouterOS** ([`tests/test_e27_routeros_parity.py`](../tests/test_e27_routeros_parity.py)):
@@ -170,6 +192,9 @@ E10/E27 cases of the other modes, and the RouterOS-only check of E00.
 | Routing rule missing | – | fail-closed | fail-closed | yes |
 | Rule points to the wrong setup | – | **foreign access** (setup 7) | **fail-closed**; control without the source prefix: setup 7 | yes |
 | Forward rule of setup 12 missing | fail-closed | – | fail-closed | yes |
+
+E14 (serial consoles) and E26 (USB) run unchanged through the driver: 11 passed, 1 skipped (kernel `usbip attach`)
+in every mode, including the console regrouping and the "foreign console unreachable" checks.
 
 Also through the driver, unchanged from Linux: address outside the setup prefix refused, booking on the wrong
 setup fails closed, setups can't reach foreign tunnels (E10 tests that only use `edge-ctl`).

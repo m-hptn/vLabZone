@@ -6,7 +6,8 @@ on a single Linux host. Background and experiments: [`../../idea.md`](../../idea
 implementation roadmap: [`../../PLAN.md`](../../PLAN.md).
 
 > **Status:** three labs, `vlabzone-vrf`, `vlabzone-pbr` and `vlabzone-hybrid`, one per edge mode, generated from
-> `config/setups.yaml`. All pass E01–E06, E09, E11, E13 and E20; E10 compares the modes. Each lab also runs with
+> `config/setups.yaml`. All pass E01–E06, E09, E11, E13, E14 (serial consoles), E20 and E26 (USB); E10 compares the modes. Serial
+> consoles and USB devices sit on shared appliances behind the edge ([docs/consoles-usb.md](docs/consoles-usb.md)). Each lab also runs with
 > the MikroTik (RouterOS CHR) as edge, `EDGE_IMPL=routeros` (E27, [docs/lab-routeros.md](docs/lab-routeros.md)).
 
 ---
@@ -222,9 +223,9 @@ containerlab/vlabzone/
 ├── scripts/               preflight.sh, smoke.sh, wait-ready.sh, spike-routeros.py
 ├── drivers/               edge_routeros.py – MikroTik edge over REST (configure + edge-ctl commands)
 ├── topology/              gen.py → vlabzone-{vrf,pbr,hybrid}.clab.yml, views/ (deployment, logical); smoke.clab.yml
-├── images/                base + role images (router, edge, workspace, device, serial, mgmt, broker), routeros/build.sh
+├── images/                base + role images (router, edge, workspace, device, serial, usbhub, mgmt, broker), routeros/build.sh
 ├── config/                setups.yaml (setups, VLANs, devices), corp-fw.nft, users.yaml
-├── docs/                  per-lab documentation: lab-vrf.md, lab-pbr.md, lab-hybrid.md, common.md, vrf-vs-pbr.md
+├── docs/                  per-lab documentation: lab-vrf.md, lab-pbr.md, lab-hybrid.md, common.md, consoles-usb.md, vrf-vs-pbr.md
 ├── tests/                 pytest suite, one module per experiment
 └── results/               experiment protocols and pcaps (not committed)
 ```

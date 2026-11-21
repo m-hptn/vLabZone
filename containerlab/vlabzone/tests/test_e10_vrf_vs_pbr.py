@@ -282,7 +282,10 @@ def test_e10_vrf_tunnel_in_wrong_vrf_leaks_one_way(lab, tunnel, vrf_only):
     finally:
         handle = edge.run("nft -a list chain inet edge setups | awk '/\"eth2.107\"/ && /\"wg-s12\"/ {print $NF}'").stdout.strip()
         edge.run(f"nft delete rule inet edge setups handle {handle} && "
-                 "ip link set wg-s12 master vrf-s12 && ip addr replace 10.250.0.1/16 dev wg-s12")
+                 "ip link set wg-s12 master vrf-s12 && ip addr replace 10.250.0.1/16 dev wg-s12 && "
+                 # the main-table reply route of the appliance VLAN is bound to wg-s12 and is lost with
+                 # the move (docs/consoles-usb.md): restore it like the address
+                 f"ip route replace {labcfg.setup_prefix(12)} dev wg-s12")
     # Changing the VRF membership restarts wg-s12: the edge loses the session keys and the
     # workspace only re-handshakes after WireGuard's retry timer (~15 s).
     t0 = time.monotonic()

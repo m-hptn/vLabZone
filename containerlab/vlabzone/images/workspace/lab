@@ -4,6 +4,13 @@
 #   lab list                      contexts on this workspace: setup, mode, address, last handshake
 #   lab enter <setup>             shell inside the setup's namespace (power mode), prompt [setupNN]
 #   lab enter <setup> -- CMD...   run one command there (scripts, tests)
+#   lab console <setup> <device>  serial console of a device of the setup (NPort, RFC 2217, miniterm)
+#   lab usb list <setup>          USB ports the setup's hub group offers (AnywhereUSB stand-in)
+#   lab usb attach <setup> <busid>  attach one as a local USB device (usbip; needs vhci-hcd on the host)
+#   lab usb detach <vhci port>    detach it again
+#
+# Serial consoles and USB ports are on shared appliances (docs/consoles-usb.md), reached through
+# the setup's tunnel. Their addresses come from setups.yaml for now (the broker in stage 3).
 #
 # Power mode: each setup context lives in its own network namespace `setup<N>` with its
 # WireGuard interface. Inside, only that setup is reachable – several setups with the SAME
@@ -45,9 +52,46 @@ enter() {
   exec ip netns exec "$ns" env LAB_SETUP="$setup" PS1="[setup$setup] \\w\\$ " bash --norc -i
 }
 
+# run a command in a setup's context: its namespace (power mode) or the workspace itself (desktop)
+in_ctx() {
+  local setup=$1; shift
+  if ip netns list | awk '{print $1}' | grep -qx "$(ns_of "$setup")"; then
+    ip netns exec "$(ns_of "$setup")" "$@"
+  else
+    "$@"
+  fi
+}
+
+console() {
+  local setup=${1:-} dev=${2:-}
+  [[ $setup =~ ^[0-9]+$ && -n $dev ]] || die "usage: lab console <setup> <device>"
+  vlab-cfg setup "$setup" devices | tr -d "[]',\"" | tr ' ' '\n' | grep -qx "$dev" \
+    || die "device $dev is not in setup $setup"
+  read -r ip port < <(vlab-cfg device-consoles "$dev") || die "device $dev has no serial console"
+  in_ctx "$setup" python3 -m serial.tools.miniterm --raw "rfc2217://$ip:$port" 9600
+}
+
+usb() {
+  local sub=${1:-} setup=${2:-}
+  hub() { vlab-cfg usb-hubs | head -1; }
+  read -r _name ip port < <(hub)
+  case "$sub" in
+    list)   [[ $setup =~ ^[0-9]+$ ]] || die "usage: lab usb list <setup>"
+            in_ctx "$setup" usbip-client list "$ip" "$port" ;;
+    attach) [[ $setup =~ ^[0-9]+$ && -n ${3:-} ]] || die "usage: lab usb attach <setup> <busid>"
+            [[ -e /sys/devices/platform/vhci_hcd.0 ]] || die "vhci-hcd not loaded on the host (modprobe vhci-hcd)"
+            in_ctx "$setup" usbip --tcp-port "$port" attach -r "$ip" -b "$3" ;;
+    detach) [[ -n ${2:-} ]] || die "usage: lab usb detach <vhci port>"
+            usbip detach -p "$2" ;;
+    *) die "usage: lab usb list|attach|detach …" ;;
+  esac
+}
+
 case "${1:-}" in
   list)  list ;;
   enter) shift; enter "$@" ;;
+  console) shift; console "$@" ;;
+  usb)   shift; usb "$@" ;;
   connect|disconnect) die "$1 comes with lab-agent and the broker (stage 3)" ;;
-  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

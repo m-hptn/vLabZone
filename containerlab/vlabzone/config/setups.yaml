@@ -17,6 +17,20 @@ edge:
   alias_net: 10.200.0.0/16     # setup N -> 10.200.N.0/24
 
 # ---------------------------------------------------------------------------------------
+# Shared access appliances (docs/consoles-usb.md): one serial device server and one USB hub
+# serve the devices of ALL setups. Own VLAN on the aggregation switch, reached only through
+# the edge (no NAT: the appliances see the tunnel address 10.250.<setup>.<user>).
+# ---------------------------------------------------------------------------------------
+appliances:
+  vlan: 197
+  net: 10.197.0.0/24
+  edge_ip: 10.197.0.1
+  serial:                      # Moxa NPort 5600 (8 ports), operation mode RFC 2217
+    - { name: nport1, ip: 10.197.0.10, agg_port: eth31, mode: rfc2217, base_port: 4000, ports: 8 }
+  usb:                         # Digi AnywhereUSB 24 Plus: one TCP port for all hub ports
+    - { name: ausb1, ip: 10.197.0.11, agg_port: eth32, tcp_port: 18574, ports: 24 }
+
+# ---------------------------------------------------------------------------------------
 # Inventory: switches and devices (fixed hardware, cabling)
 # ---------------------------------------------------------------------------------------
 aggregation:
@@ -29,18 +43,18 @@ switches:                      # system switches, node lab-<name>
     agg_port: eth11            # port on lab-agg; the system switch uses eth1 as uplink
     mgmt_ip: 10.198.0.4/24
     devices:                   # same IPs on one switch on purpose (identical boards)
-      - { name: sys1-dev1, port: eth11, ip: 192.168.1.20/24 }
-      - { name: sys1-dev2, port: eth12, ip: 192.168.1.21/24 }
-      - { name: sys1-dev3, port: eth13, ip: 192.168.1.20/24 }
-      - { name: sys1-dev4, port: eth14, ip: 192.168.1.22/24 }
+      - { name: sys1-dev1, port: eth11, ip: 192.168.1.20/24, serial: { server: nport1, port: 1 }, usb: { hub: ausb1, port: 1 } }
+      - { name: sys1-dev2, port: eth12, ip: 192.168.1.21/24, serial: { server: nport1, port: 2 } }
+      - { name: sys1-dev3, port: eth13, ip: 192.168.1.20/24, serial: { server: nport1, port: 3 }, usb: { hub: ausb1, port: 2 } }
+      - { name: sys1-dev4, port: eth14, ip: 192.168.1.22/24, serial: { server: nport1, port: 4 } }
   - name: sys2
     agg_port: eth12
     mgmt_ip: 10.198.0.5/24
     devices:
-      - { name: sys2-dev1, port: eth11, ip: 192.168.1.20/24 }
-      - { name: sys2-dev2, port: eth12, ip: 192.168.1.21/24 }
-      - { name: sys2-dev3, port: eth13, ip: 192.168.1.22/24 }
-      - { name: sys2-dev4, port: eth14, ip: 192.168.1.20/24 }
+      - { name: sys2-dev1, port: eth11, ip: 192.168.1.20/24, serial: { server: nport1, port: 5 }, usb: { hub: ausb1, port: 3 } }
+      - { name: sys2-dev2, port: eth12, ip: 192.168.1.21/24, serial: { server: nport1, port: 6 } }
+      - { name: sys2-dev3, port: eth13, ip: 192.168.1.22/24, serial: { server: nport1, port: 7 } }
+      - { name: sys2-dev4, port: eth14, ip: 192.168.1.20/24, serial: { server: nport1, port: 8 } }
 
 # Wrong on purpose: devices point to a non-existent gateway (E04)
 device_default_gateway: 192.168.1.1

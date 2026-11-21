@@ -170,7 +170,7 @@ vLabZone/containerlab/vlabzone/
     `action=lookup-only-in-table` (with `lookup` a missing setup route falls back to main → corporate net
     reachable); without a filter the tunnels reach the router's management services (not so in VRF).
 
-### Stage 2 – Variants (E10, E11, E13, E14, E27 part 1)
+### Stage 2 – Variants (E10, E11, E13, E14, E26, E27 part 1)
 11. Edge PBR mode + `gw-12`, `gw-7`; run the stage-1 suite in both modes; deliberate misconfig tests (E10).
     ✅ implemented 2026-11-20 (done before stage 1b). One lab per mode, generated from `setups.yaml`
     (`topology/gen.py` → `vlabzone-vrf`, `vlabzone-pbr`), both can run side by side (`make up-all`,
@@ -206,6 +206,21 @@ vLabZone/containerlab/vlabzone/
     Known limit: IPs in payloads (active FTP, SIP) are not translated.
     Full suites: VRF 68, PBR 73, hybrid 69 passed (0 failed).
 13. `acc-12-ser`: socat pty + fake console + ser2net RFC 2217 on :3001; pyserial client test (E14).
+    ✅ implemented 2026-11-21, adapted to the real hardware: serial consoles on a **Moxa NPort 5600**, USB on a
+    **Digi AnywhereUSB 24 Plus**, both shared by all setups (E26 moved forward from stage 4). Appliance VLAN 197
+    (10.197.0.0/24) behind the edge, no NAT (the appliances see 10.250.<setup>.<user>), no new corporate rule.
+    Serial = network-enforced: nft set `console_sN` per setup (RouterOS: one filter rule per console),
+    `edge-ctl console list|allow|deny` for regrouping. USB = hub-enforced: groups per setup, members per booking
+    (`hub-ctl`; real hub: client IDs, kept in step by the broker). Routing: route leak into the setup tables
+    (VRF/hybrid; VRF also `10.250.N.0/24 dev wg-sN` in main), `ip rule to 10.197.0.0/24 lookup main` (PBR).
+    Stand-ins: `nport-sim.py` (RFC 2217 via pyserial's PortManager – ser2net on a pty can't ack DTR),
+    `usbhub-sim.py` (USB/IP server with groups, emulated devices). Workspace: `lab console`, `lab usb`,
+    `usbip-client`. Kernel `usbip attach` test skipped unless `vhci-hcd` is loaded on the host.
+    Finding: in VRF mode the main-table reply route `10.250.N.0/24 dev wg-sN` is lost when wg-sN changes VRF
+    or is recreated (E10's wrong-VRF case) – reconcile must check it. RouterOS: VRF table appears
+    asynchronously, the driver waits before the route leak.
+    Docs: `containerlab/vlabzone/docs/consoles-usb.md`.
+    Suites: Linux VRF 81, PBR 86, hybrid 82 passed; MikroTik VRF 80, PBR 85, hybrid 82 passed (0 failed).
 14. RouterOS edge: `render.py` + `.rsc` templates for VRF/PBR/alias, `routeros_image` Ansible role,
     `EDGE_IMPL` switch in Makefile/topology; stage 1–2 suites pass with `EDGE_IMPL=routeros` (peers added
     via REST from the test fixtures).
@@ -258,7 +273,7 @@ Out of scope here: creating/deleting setups at runtime (needs `edge-ctl setup ad
 22. `topology/gen_scale.py` for 50 setups / 200 contexts (edge-side devices only) → E21 in VRF vs PBR; E22 iperf3.
     RouterOS runs only with a license (see license limit above); CPU-bound CHR numbers are not
     representative of real MikroTik hardware, so they are documented as such.
-23. Optional: `samba-ad` + Kerberos (E23), SOCKS setup-shell (E24), per-VRF DNS (E25), usbip if kernel allows (E26).
+23. Optional: `samba-ad` + Kerberos (E23), SOCKS setup-shell (E24), per-VRF DNS (E25). (E26 USB done in step 13.)
 
 Each stage: full regression suite of earlier stages, then commit (one or more commits per step, English messages).
 
